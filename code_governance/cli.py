@@ -86,6 +86,13 @@ def main():
         help="Zero-config scan: discover modules from source and check for cycles. No governance.toml needed.",
     )
     parser.add_argument(
+        "--depth",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Module granularity for --auto: top-level packages (1, default), deeper nesting (2+), or unlimited per-directory (0)",
+    )
+    parser.add_argument(
         "--transitive",
         action="store_true",
         help="Check transitive dependencies (detects indirect violations through dependency chains)",
@@ -392,7 +399,7 @@ def _handle_auto(args):
         print(f"Source root not found: {source_root}", file=sys.stderr)
         sys.exit(1)
 
-    report = run_auto_scan(source_root)
+    report = run_auto_scan(source_root, max_depth=args.depth)
 
     if args.format == "json":
         print(json.dumps(report.model_dump(), indent=2))

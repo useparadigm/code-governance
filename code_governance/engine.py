@@ -348,50 +348,71 @@ def populate_cannot_depend_on(config_path: str | Path) -> GovernanceConfig:
     return _seed_cannot_depend_on(config, source_root)
 
 
-def _discover_modules_recursive(root: Path, extensions: set[str]) -> list:
-    """Recursively discover all directories containing source files of the given language."""
+def _is_skippable_part(part: str) -> bool:
+    """Directory components that should never contribute modules: build/cache dirs,
+    dunder dirs (__pycache__), and hidden dirs. Single-underscore dirs like
+    `_transports` or `_internal` ARE real modules and are kept."""
+    return part in _SKIP_DIRS or part.startswith("__") or part.startswith(".")
+
+
+def _iter_source_files(root: Path, extensions: set[str]):
+    """Yield (relative_dir_parts, file) for every source file under root, skipping
+    build/cache/hidden directories. Single-underscore files and dirs are kept."""
+    for f in root.rglob("*"):
+        if not f.is_file() or f.suffix not in extensions:
+            continue
+        rel = f.relative_to(root)
+        dir_parts = rel.parts[:-1]
+        if any(_is_skippable_part(p) for p in dir_parts):
+            continue
+        yield dir_parts, f
+
+
+def _discover_modules(root: Path, extensions: set[str], max_depth: int = 1) -> list:
+    """Discover modules up to ``max_depth`` directory levels under ``root``.
+
+    Each directory whose depth is <= max_depth (and which contains source files,
+    directly or nested) becomes one module; files in deeper sub-directories are
+    attributed to their nearest ancestor module. This produces a clean partition
+    (no parent/child module overlap), so nested packages do not generate spurious
+    "cycles". Loose source files at the root are grouped into a single module
+    named after the root directory.
+
+    ``max_depth <= 0`` means unlimited depth — every source directory becomes its
+    own module (the original fine-grained behavior, available via --depth 0).
+    """
     from code_governance.schemas import ModuleConfig
 
-    modules = []
+    modules: dict[str, str] = {}
+    has_root_loose = False
 
-    def _walk(directory: Path, prefix: str):
-        has_src = any(
-            f.suffix in extensions and not f.name.startswith("_")
-            for f in directory.iterdir()
-            if f.is_file()
-        )
-        if has_src and prefix:
-            modules.append(ModuleConfig(
-                name=prefix.replace("/", ".").rstrip("."),
-                path=prefix,
-                cannot_depend_on=[],
-            ))
+    for dir_parts, _f in _iter_source_files(root, extensions):
+        if not dir_parts:
+            has_root_loose = True
+            continue
+        depth = len(dir_parts) if max_depth <= 0 else min(len(dir_parts), max_depth)
+        mod_parts = dir_parts[:depth]
+        name = ".".join(mod_parts)
+        modules[name] = "/".join(mod_parts) + "/"
 
-        for child in sorted(directory.iterdir()):
-            if not child.is_dir():
-                continue
-            if child.name.startswith(".") or child.name.startswith("_"):
-                continue
-            if child.name in _SKIP_DIRS:
-                continue
-            _walk(child, f"{prefix}{child.name}/")
+    result = [
+        ModuleConfig(name=name, path=path, cannot_depend_on=[])
+        for name, path in sorted(modules.items())
+    ]
 
-    _walk(root, "")
+    if has_root_loose:
+        root_name = root.name if root.name and root.name not in modules else "core"
+        result.insert(0, ModuleConfig(name=root_name, path=".", cannot_depend_on=[]))
 
-    if not modules:
-        has_root_files = any(
-            f.suffix in extensions and not f.name.startswith("_")
-            for f in root.iterdir()
-            if f.is_file()
-        )
-        if has_root_files:
-            modules.append(ModuleConfig(name="core", path=".", cannot_depend_on=[]))
-
-    return modules
+    return result
 
 
-def run_auto_scan(source_root: str | Path) -> GovernanceReport:
-    """Zero-config scan: discover modules at every directory level, check for cycles."""
+def run_auto_scan(source_root: str | Path, max_depth: int = 1) -> GovernanceReport:
+    """Zero-config scan: discover top-level modules and check for cycles.
+
+    By default modules are the top-level packages under ``source_root`` (depth 1),
+    which matches how engineers reason about architecture and keeps output usable
+    on large codebases. Use ``max_depth`` to split deeper (``0`` = unlimited)."""
     from code_governance.schemas import RulesConfig
 
     source_root = Path(source_root).resolve()
@@ -400,11 +421,15 @@ def run_auto_scan(source_root: str | Path) -> GovernanceReport:
 
     language = detect_language(source_root)
     extensions = _LANG_EXTENSIONS[language.value]
-    modules = _discover_modules_recursive(source_root, extensions)
+    modules = _discover_modules(source_root, extensions, max_depth=max_depth)
 
     config = GovernanceConfig(
         root=".",
         language=language,
+        # The source-root directory name is the importable package name, so absolute
+        # self-imports (`from posthog.models import X`) resolve to local modules
+        # instead of being dropped as third-party imports.
+        package_prefix=source_root.name or None,
         modules=modules,
         rules=RulesConfig(
             no_cycles=True,
