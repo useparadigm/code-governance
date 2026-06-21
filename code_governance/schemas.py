@@ -56,7 +56,7 @@ class RulesConfig(BaseModel):
     no_cycles: bool = True
     enforce_layers: bool = False
     enforce_cannot_depend_on: bool = True
-    # Off by default — opt-in advanced contracts.
+    # Enabled, but inert unless a module sets `can_only_depend_on` (default None).
     enforce_can_only_depend_on: bool = True
     no_orphans: bool = False
     independence: list[list[str]] = []

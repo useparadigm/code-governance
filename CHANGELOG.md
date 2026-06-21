@@ -25,10 +25,14 @@ django, scikit-learn, and PostHog (Python + TypeScript frontend).
 - **TypeScript zero-config resolution.** Bare specifiers (`scenes/urls`) and
   `~/` / `@/` src-root aliases resolve relative to the source root even when no
   `tsconfig.json` is found (PostHog frontend: 1 → 7 real cycles, ~17.5k edges).
-- **Deterministic output.** Cycle detection no longer depends on set/hash
-  ordering; results are identical across runs and machines (previously 12–19
-  cycles across runs of the same repo). Cycles are canonicalized to start at
-  their smallest member.
+- **Deterministic output.** Cycle detection no longer depends on set/hash or
+  filesystem ordering; results are identical across runs and machines (previously
+  12–19 cycles across runs of the same repo). Source files are scanned in sorted
+  order and prefix matches resolve to the closest importable.
+- **Cycles reported per strongly connected component.** Instead of enumerating
+  the (exponentially many) elementary cycles in a dense cluster, each entangled
+  group of modules is reported once with a representative loop. No FN (every
+  cyclic module is surfaced), no flood, fully deterministic.
 
 ### New rules
 

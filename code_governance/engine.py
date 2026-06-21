@@ -400,7 +400,19 @@ def _discover_modules(root: Path, extensions: set[str], max_depth: int = 1) -> l
     ]
 
     if has_root_loose:
-        root_name = root.name if root.name and root.name not in modules else "core"
+        taken = set(modules)
+        root_name = root.name or "core"
+        # Guarantee a unique name even if a child package already uses it (e.g. a
+        # source root literally named `core` that also contains a `core/` subdir),
+        # so two distinct directories never collapse into one module.
+        if root_name in taken:
+            base = "core" if root_name != "core" else "root"
+            candidate = base
+            i = 2
+            while candidate in taken:
+                candidate = f"{base}{i}"
+                i += 1
+            root_name = candidate
         result.insert(0, ModuleConfig(name=root_name, path=".", cannot_depend_on=[]))
 
     return result

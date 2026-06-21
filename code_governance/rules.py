@@ -52,32 +52,27 @@ def check_no_cycles(graph: DependencyGraph, config: GovernanceConfig) -> list[Vi
     for mod in module_names:
         adjacency[mod] = (graph.get_module_dependencies(mod) & module_names) - excluded
 
-    cycles = _find_cycles(adjacency)
-
-    # Canonicalize each cycle by rotating to start at its smallest node, so the
-    # same cycle is represented identically no matter where traversal entered it,
-    # then dedup and sort for fully stable, reproducible output.
-    unique_cycles: list[list[str]] = []
-    seen_cycles: set[frozenset[str]] = set()
-    for cycle in cycles:
-        key = frozenset(cycle)
-        if key in seen_cycles:
-            continue
-        seen_cycles.add(key)
-        unique_cycles.append(_rotate_to_min(cycle))
-
-    unique_cycles.sort(key=lambda c: (len(c), c))
-
-    simple_node_sets = [frozenset(c) for c in unique_cycles if len(c) == 2]
+    # Report one violation per strongly connected component (a maximal cluster of
+    # mutually-reachable modules), not per elementary cycle. Dense clusters contain
+    # exponentially many elementary cycles; enumerating them floods the report and
+    # hides the real signal — that this *set* of modules is entangled. SCCs are
+    # unique and deterministic, so output is stable and every cyclic relationship
+    # is surfaced exactly once. A representative shortest cycle is shown as evidence.
+    sccs = _strongly_connected_components(adjacency)
 
     violations: list[Violation] = []
-    for cycle in unique_cycles:
-        if len(cycle) > 2:
-            is_superset = any(s.issubset(frozenset(cycle)) for s in simple_node_sets)
-            if is_superset:
-                continue
-
+    for scc in sccs:
+        if len(scc) < 2:
+            continue
+        cycle = _representative_cycle(scc, adjacency)
         cycle_str = " -> ".join(cycle + [cycle[0]])
+        if len(scc) > len(set(cycle)):
+            detail = (
+                f"Circular dependency among {len(scc)} modules "
+                f"{{{', '.join(scc)}}}: {cycle_str}"
+            )
+        else:
+            detail = f"Circular dependency: {cycle_str}"
         evidence: list[dict] = []
         for i in range(len(cycle)):
             src = cycle[i]
@@ -85,8 +80,8 @@ def check_no_cycles(graph: DependencyGraph, config: GovernanceConfig) -> list[Vi
             evidence.extend(_evidence_for_edge(graph.edge_details, src, tgt))
         violations.append(Violation(
             rule=RuleKind.NO_CYCLES,
-            module=cycle[0],
-            detail=f"Circular dependency: {cycle_str}",
+            module=scc[0],
+            detail=detail,
             evidence=evidence,
         ))
 
@@ -440,42 +435,74 @@ def run_all_rules(graph: DependencyGraph, config: GovernanceConfig) -> list[Viol
     return apply_severity_overrides(violations, config)
 
 
-def _rotate_to_min(cycle: list[str]) -> list[str]:
-    """Rotate a cycle so it begins at its lexicographically smallest node,
-    preserving cyclic order — a canonical representative independent of traversal."""
-    if not cycle:
-        return cycle
-    i = min(range(len(cycle)), key=lambda k: cycle[k])
-    return cycle[i:] + cycle[:i]
+def _strongly_connected_components(adjacency: dict[str, set[str]]) -> list[list[str]]:
+    """Tarjan's SCC algorithm with sorted iteration for deterministic output.
+    Returns components as sorted member lists, ordered by (size, members)."""
+    index_of: dict[str, int] = {}
+    low: dict[str, int] = {}
+    on_stack: set[str] = set()
+    stack: list[str] = []
+    counter = [0]
+    result: list[list[str]] = []
 
-
-def _find_cycles(adjacency: dict[str, set[str]]) -> list[list[str]]:
-    # Iterate nodes and neighbors in sorted order so cycle detection is fully
-    # deterministic regardless of PYTHONHASHSEED / set ordering. Without this the
-    # reported set of cycles (and their count) varies run to run, which breaks CI
-    # reproducibility and confuses agents diffing results.
-    WHITE, GRAY, BLACK = 0, 1, 2
-    color: dict[str, int] = {n: WHITE for n in adjacency}
     neighbors = {n: sorted(adjacency.get(n, set())) for n in adjacency}
-    path: list[str] = []
-    cycles: list[list[str]] = []
 
-    def dfs(node: str):
-        color[node] = GRAY
-        path.append(node)
-        for neighbor in neighbors.get(node, ()):
-            if neighbor not in color:
+    import sys as _sys
+    _sys.setrecursionlimit(max(10000, _sys.getrecursionlimit()))
+
+    def strongconnect(v: str):
+        index_of[v] = low[v] = counter[0]
+        counter[0] += 1
+        stack.append(v)
+        on_stack.add(v)
+        for w in neighbors.get(v, ()):
+            if w not in adjacency:
                 continue
-            if color[neighbor] == GRAY:
-                idx = path.index(neighbor)
-                cycles.append(path[idx:])
-            elif color[neighbor] == WHITE:
-                dfs(neighbor)
-        path.pop()
-        color[node] = BLACK
+            if w not in index_of:
+                strongconnect(w)
+                low[v] = min(low[v], low[w])
+            elif w in on_stack:
+                low[v] = min(low[v], index_of[w])
+        if low[v] == index_of[v]:
+            comp: list[str] = []
+            while True:
+                w = stack.pop()
+                on_stack.discard(w)
+                comp.append(w)
+                if w == v:
+                    break
+            result.append(sorted(comp))
 
     for node in sorted(adjacency):
-        if color[node] == WHITE:
-            dfs(node)
+        if node not in index_of:
+            strongconnect(node)
 
-    return cycles
+    result.sort(key=lambda c: (len(c), c))
+    return result
+
+
+def _representative_cycle(scc: list[str], adjacency: dict[str, set[str]]) -> list[str]:
+    """Find a short representative cycle within an SCC: BFS from the smallest
+    member back to itself using only intra-SCC edges. Deterministic (sorted)."""
+    from collections import deque
+
+    members = set(scc)
+    start = scc[0]
+    # BFS for the shortest path start -> start (length >= 2).
+    queue: deque[list[str]] = deque([[start]])
+    visited: set[str] = set()
+    while queue:
+        path = queue.popleft()
+        node = path[-1]
+        for nxt in sorted(adjacency.get(node, set())):
+            if nxt not in members:
+                continue
+            if nxt == start and len(path) >= 2:
+                return path
+            if nxt == start and len(path) == 1:
+                return [start]  # self-loop (shouldn't happen for modules)
+            if nxt in visited:
+                continue
+            visited.add(nxt)
+            queue.append(path + [nxt])
+    return scc  # fallback: SCC guarantees a cycle exists

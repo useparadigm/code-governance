@@ -31,7 +31,10 @@ def extract_directory(
     results: list[FileExtractionResult] = []
 
     for ext in patterns.extensions:
-        for file_path in root_path.rglob(f"*{ext}"):
+        # Sort so file (and therefore importable_map) insertion order is stable
+        # across machines/filesystems — rglob order is filesystem-dependent and
+        # would otherwise make edge attribution non-reproducible.
+        for file_path in sorted(root_path.rglob(f"*{ext}")):
             if _should_skip(file_path):
                 continue
             rel_path = str(file_path.relative_to(root_path))

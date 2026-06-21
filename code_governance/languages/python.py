@@ -110,11 +110,20 @@ class PythonPatterns:
         if candidate in importable_map:
             return importable_map[candidate]
 
+        # Prefix fallback: a bare package import (`candidate`) matching a known
+        # importable in its subtree, or a deep import landing inside a known
+        # importable. Pick the CLOSEST importable deterministically (shortest, then
+        # lexicographically smallest) so attribution never depends on dict order.
+        best: Optional[tuple[int, str, str]] = None
         for dotted, mod_name in importable_map.items():
             if dotted.startswith(candidate + ".") or candidate.startswith(dotted + "."):
-                return mod_name
+                key = (len(dotted), dotted, mod_name)
+                if best is None or key < best:
+                    best = key
+        if best is not None:
+            return best[2]
 
-        for mod in config.modules:
+        for mod in sorted(config.modules, key=lambda m: m.path):
             mod_prefix = mod.path.rstrip("/").replace("/", ".")
             if not mod_prefix or mod_prefix == ".":
                 continue

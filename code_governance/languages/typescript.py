@@ -81,7 +81,8 @@ class TypeScriptPatterns:
         elif import_source.startswith("/"):
             out.append(import_source.lstrip("/"))
         else:
-            if self._tsconfig and self._tsconfig.base_url:
+            has_base_url = bool(self._tsconfig and self._tsconfig.base_url)
+            if has_base_url:
                 out.append(self._from_base_url(import_source))
             # Implicit base-URL fallback: many codebases import local modules with
             # bare specifiers (`scenes/urls`, `lib/api`) or a src-root alias
@@ -90,8 +91,10 @@ class TypeScriptPatterns:
             # nested source dir), treat these as paths relative to the source root.
             # Importable keys are source-root-relative, so this matches exactly;
             # true third-party packages (`react`, `@posthog/icons`) simply find no
-            # matching file and produce no edge.
-            out.extend(self._implicit_src_relative(import_source))
+            # matching file and produce no edge. Skipped when a tsconfig baseUrl is
+            # configured, since that already declares how bare specifiers resolve.
+            if not has_base_url:
+                out.extend(self._implicit_src_relative(import_source))
         return out
 
     @staticmethod
@@ -172,10 +175,15 @@ class TypeScriptPatterns:
         index_key = f"{candidate}/index"
         if index_key in importable_map:
             return importable_map[index_key]
+        # Deterministic closest match (shortest, then lexicographically smallest)
+        # so attribution does not depend on filesystem/dict iteration order.
+        best = None
         for key, mod in importable_map.items():
             if key.startswith(candidate + "/") or candidate.startswith(key + "/"):
-                return mod
-        return None
+                k = (len(key), key, mod)
+                if best is None or k < best:
+                    best = k
+        return best[2] if best is not None else None
 
     def _extract_imports(self, root: SgNode) -> list[ImportInfo]:
         results: list[ImportInfo] = []

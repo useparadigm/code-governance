@@ -217,3 +217,24 @@ def test_cycle_is_canonically_rotated():
     # cycle entered from any node reports starting at the smallest member.
     details = _cycle_details({"m": ["b"], "b": ["a"], "a": ["m"]})
     assert details == ["Circular dependency: a -> m -> b -> a"]
+
+
+def test_separate_sccs_reported_separately():
+    # {x,y} mutual pair and {p,q,r} 3-cycle are distinct SCCs -> 2 findings.
+    from code_governance.rules import check_no_cycles
+    g = _graph({"x": ["y"], "y": ["x"], "p": ["q"], "q": ["r"], "r": ["p"], "z": ["x"]})
+    names = {"x", "y", "p", "q", "r", "z"}
+    cfg = _cfg([{"name": n, "path": f"{n}/"} for n in names])
+    details = [v.detail for v in check_no_cycles(g, cfg)]
+    assert len(details) == 2  # two SCCs; z (acyclic) excluded
+
+
+def test_dense_cluster_is_one_finding_not_exploded():
+    # Fully-connected 4-module cluster -> ONE SCC finding, not many cycles.
+    from code_governance.rules import check_no_cycles
+    mods = ["a", "b", "c", "d"]
+    edges = {m: [x for x in mods if x != m] for m in mods}
+    cfg = _cfg([{"name": m, "path": f"{m}/"} for m in mods])
+    vs = check_no_cycles(_graph(edges), cfg)
+    assert len(vs) == 1
+    assert "4 modules" in vs[0].detail
