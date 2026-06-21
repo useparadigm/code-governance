@@ -83,7 +83,30 @@ class TypeScriptPatterns:
         else:
             if self._tsconfig and self._tsconfig.base_url:
                 out.append(self._from_base_url(import_source))
+            # Implicit base-URL fallback: many codebases import local modules with
+            # bare specifiers (`scenes/urls`, `lib/api`) or a src-root alias
+            # (`~/types`, `@/queries`) backed by tsconfig `baseUrl`/`paths`. When no
+            # tsconfig is discovered (the common case for zero-config --auto on a
+            # nested source dir), treat these as paths relative to the source root.
+            # Importable keys are source-root-relative, so this matches exactly;
+            # true third-party packages (`react`, `@posthog/icons`) simply find no
+            # matching file and produce no edge.
+            out.extend(self._implicit_src_relative(import_source))
         return out
+
+    @staticmethod
+    def _implicit_src_relative(import_source: str) -> list[str]:
+        for alias in ("~/", "@/"):
+            if import_source.startswith(alias):
+                return [import_source[len(alias):]]
+        if import_source in ("~", "@"):
+            return []
+        first = import_source[0]
+        # bare specifier with a path segment (local module), not a scoped package
+        # (@scope/pkg) and not a single-word bare package (`react`, `kea`).
+        if (first.isalnum() or first == "_") and "/" in import_source:
+            return [import_source]
+        return []
 
     def _apply_alias(self, import_source: str) -> list[str]:
         if not self._tsconfig or not self._tsconfig.paths:
