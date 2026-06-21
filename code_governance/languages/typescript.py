@@ -175,15 +175,28 @@ class TypeScriptPatterns:
         index_key = f"{candidate}/index"
         if index_key in importable_map:
             return importable_map[index_key]
-        # Deterministic closest match (shortest, then lexicographically smallest)
-        # so attribution does not depend on filesystem/dict iteration order.
-        best = None
-        for key, mod in importable_map.items():
-            if key.startswith(candidate + "/") or candidate.startswith(key + "/"):
-                k = (len(key), key, mod)
-                if best is None or k < best:
-                    best = k
-        return best[2] if best is not None else None
+        # Case A — candidate deeper than a known importable: longest ancestor.
+        parts = candidate.split("/")
+        for k in range(len(parts) - 1, 0, -1):
+            ancestor = "/".join(parts[:k])
+            if ancestor in importable_map:
+                return importable_map[ancestor]
+        # Case B — candidate is a directory containing known importables. Served
+        # from a memoized prefix index (sorted -> deterministic), not an O(N) scan.
+        return self._prefix_index(importable_map).get(candidate)
+
+    def _prefix_index(self, importable_map: dict[str, str]) -> dict[str, str]:
+        if getattr(self, "_prefix_index_map", None) is importable_map:
+            return self._prefix_index_cache
+        index: dict[str, str] = {}
+        for key in sorted(importable_map):
+            mod = importable_map[key]
+            parts = key.split("/")
+            for k in range(1, len(parts)):
+                index.setdefault("/".join(parts[:k]), mod)
+        self._prefix_index_map = importable_map
+        self._prefix_index_cache = index
+        return index
 
     def _extract_imports(self, root: SgNode) -> list[ImportInfo]:
         results: list[ImportInfo] = []

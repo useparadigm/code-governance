@@ -110,18 +110,23 @@ class PythonPatterns:
         if candidate in importable_map:
             return importable_map[candidate]
 
-        # Prefix fallback: a bare package import (`candidate`) matching a known
-        # importable in its subtree, or a deep import landing inside a known
-        # importable. Pick the CLOSEST importable deterministically (shortest, then
-        # lexicographically smallest) so attribution never depends on dict order.
-        best: Optional[tuple[int, str, str]] = None
-        for dotted, mod_name in importable_map.items():
-            if dotted.startswith(candidate + ".") or candidate.startswith(dotted + "."):
-                key = (len(dotted), dotted, mod_name)
-                if best is None or key < best:
-                    best = key
-        if best is not None:
-            return best[2]
+        # Case A — candidate is deeper than a known importable (`a.b.c` imported,
+        # `a.b` is the real module file): match the longest existing ancestor.
+        # O(depth), deterministic, and resolves to the closest module.
+        parts = candidate.split(".")
+        for k in range(len(parts) - 1, 0, -1):
+            ancestor = ".".join(parts[:k])
+            if ancestor in importable_map:
+                return importable_map[ancestor]
+
+        # Case B — candidate is a package that contains known importables
+        # (`from . import subpkg` → candidate `subpkg`, importable `subpkg.x`).
+        # Served from a prefix index built once per importable_map (sorted, so the
+        # choice is deterministic), avoiding an O(N) scan on every lookup.
+        prefix_index = self._prefix_index(importable_map)
+        hit = prefix_index.get(candidate)
+        if hit is not None:
+            return hit
 
         for mod in sorted(config.modules, key=lambda m: m.path):
             mod_prefix = mod.path.rstrip("/").replace("/", ".")
@@ -131,6 +136,22 @@ class PythonPatterns:
                 return mod.name
 
         return None
+
+    def _prefix_index(self, importable_map: dict[str, str]) -> dict[str, str]:
+        """Map every package prefix of every importable to a module, built once per
+        importable_map and memoized. Sorted iteration + setdefault makes the choice
+        deterministic when a prefix spans modules."""
+        if getattr(self, "_prefix_index_map", None) is importable_map:
+            return self._prefix_index_cache
+        index: dict[str, str] = {}
+        for dotted in sorted(importable_map):
+            mod = importable_map[dotted]
+            parts = dotted.split(".")
+            for k in range(1, len(parts)):
+                index.setdefault(".".join(parts[:k]), mod)
+        self._prefix_index_map = importable_map
+        self._prefix_index_cache = index
+        return index
 
     def _extract_imports(self, root: SgNode) -> list[ImportInfo]:
         results: list[ImportInfo] = []
