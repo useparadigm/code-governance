@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Optional
 
@@ -9,6 +10,10 @@ from code_governance.schemas import ClassInfo, FileExtractionResult, ImportInfo
 
 if TYPE_CHECKING:
     from code_governance.schemas import GovernanceConfig
+
+# Authoritative stdlib top-level module names (Python 3.10+). Used to keep bare
+# absolute imports that shadow a local package name from creating false edges.
+_STDLIB_MODULES = frozenset(getattr(sys, "stdlib_module_names", ()))
 
 
 class PythonPatterns:
@@ -49,11 +54,22 @@ class PythonPatterns:
         module_files: dict[str, str],
         imported_name: Optional[str] = None,
     ) -> Optional[str]:
-        if import_source.startswith("."):
+        is_relative = import_source.startswith(".")
+        if is_relative:
             resolved = _resolve_relative_import(import_source, importing_file)
             # "" is a valid result (the package root); only None means out of bounds.
             if resolved is not None:
                 import_source = resolved
+        else:
+            # A bare absolute import (`import json`, `from logging import x`) whose
+            # top-level name is a standard-library module resolves to the stdlib in
+            # Python 3, never to a local module of the same name — that would only
+            # be reachable via a relative or package-prefixed import. Treat it as
+            # external to avoid false edges when a local package shadows a stdlib
+            # name (json, types, email, logging, queue, ...).
+            top = import_source.split(".", 1)[0]
+            if top in _STDLIB_MODULES and top != config.package_prefix:
+                return None
 
         # Base candidates: the import source as written, plus the same source with
         # the source-root package name / configured prefix stripped, since file

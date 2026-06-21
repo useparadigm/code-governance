@@ -138,3 +138,27 @@ def test_symbol_import_does_not_invent_module_edge(tmp_path):
     graph = build_dependency_graph(extractions, config)
     core_deps = graph.get_module_dependencies("core")
     assert core_deps == set()  # resolves to self (internal), no phantom edge
+
+
+# ── Stdlib shadowing ──────────────────────────────────────────────────────
+
+
+def test_bare_stdlib_import_does_not_link_local_shadow(tmp_path):
+    # local `json` package + `import json` (stdlib) must NOT create an edge.
+    pkg = tmp_path / "app"
+    _write(pkg, "json/__init__.py", "x = 1\n")
+    _write(pkg, "core/svc.py", "import json\nimport logging\nfrom app.core.h import H\n")
+    _write(pkg, "core/h.py", "H = 1\n")
+    report = run_auto_scan(pkg)
+    core = next(m for m in report.metrics if m.name == "core")
+    assert core.external_edges == 0  # json/logging are stdlib, not local
+
+
+def test_package_prefixed_shadow_still_resolves(tmp_path):
+    # `from app.json import x` IS the local json package and must resolve.
+    pkg = tmp_path / "app"
+    _write(pkg, "json/__init__.py", "x = 1\n")
+    _write(pkg, "core/svc.py", "from app.json import x\n")
+    report = run_auto_scan(pkg)
+    core = next(m for m in report.metrics if m.name == "core")
+    assert core.external_edges >= 1
