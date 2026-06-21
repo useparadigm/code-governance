@@ -6,7 +6,7 @@ from code_governance.config import load_config
 from code_governance.dep_graph import build_dependency_graph
 from code_governance.extractor import extract_directory
 from code_governance.languages import get_patterns
-from code_governance.rules import ALL_RULES, compute_module_metrics
+from code_governance.rules import compute_module_metrics, run_all_rules
 from code_governance.schemas import (
     DependencyTarget,
     DiscoverReport,
@@ -31,9 +31,7 @@ def run_governance(config_path: str | Path, *, config: GovernanceConfig | None =
 
     graph = build_dependency_graph(extractions, config, patterns=patterns)
 
-    violations: list[Violation] = []
-    for rule_fn in ALL_RULES:
-        violations.extend(rule_fn(graph, config))
+    violations = run_all_rules(graph, config)
 
     metrics = compute_module_metrics(graph, config)
 
@@ -81,9 +79,7 @@ def run_governance_diff(config_path: str | Path, git_ref: str = "HEAD", *, confi
 
     graph = build_dependency_graph(all_extractions, config, patterns=patterns)
 
-    violations: list[Violation] = []
-    for rule_fn in ALL_RULES:
-        violations.extend(rule_fn(graph, config))
+    violations = run_all_rules(graph, config)
 
     changed_modules = set()
     for ext in changed_extractions:
@@ -180,6 +176,9 @@ def config_to_toml(config: GovernanceConfig) -> str:
         lines.append(f'path = "{mod.path}"')
         deps = ", ".join(f'"{d}"' for d in mod.cannot_depend_on)
         lines.append(f"cannot_depend_on = [{deps}]")
+        if mod.can_only_depend_on is not None:
+            allow = ", ".join(f'"{d}"' for d in mod.can_only_depend_on)
+            lines.append(f"can_only_depend_on = [{allow}]")
         if mod.layer:
             lines.append(f'layer = "{mod.layer}"')
         lines.append("")
@@ -443,9 +442,7 @@ def run_auto_scan(source_root: str | Path, max_depth: int = 1) -> GovernanceRepo
     extractions = extract_directory(source_root, config.language, config.rules.exclude_test_files, patterns=patterns)
     graph = build_dependency_graph(extractions, config, patterns=patterns)
 
-    violations: list[Violation] = []
-    for rule_fn in ALL_RULES:
-        violations.extend(rule_fn(graph, config))
+    violations = run_all_rules(graph, config)
 
     metrics = compute_module_metrics(graph, config)
 
