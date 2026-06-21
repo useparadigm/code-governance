@@ -57,6 +57,7 @@ class TypeScriptPatterns:
         config: "GovernanceConfig",
         importable_map: dict[str, str],
         module_files: dict[str, str],
+        imported_name: Optional[str] = None,
     ) -> Optional[str]:
         candidates = self._expand_candidates(import_source, importing_file, config)
         for cand in candidates:

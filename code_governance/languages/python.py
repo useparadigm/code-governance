@@ -47,31 +47,63 @@ class PythonPatterns:
         config: "GovernanceConfig",
         importable_map: dict[str, str],
         module_files: dict[str, str],
+        imported_name: Optional[str] = None,
     ) -> Optional[str]:
         if import_source.startswith("."):
             resolved = _resolve_relative_import(import_source, importing_file)
-            if resolved:
+            # "" is a valid result (the package root); only None means out of bounds.
+            if resolved is not None:
                 import_source = resolved
 
-        candidates = [import_source]
+        # Base candidates: the import source as written, plus the same source with
+        # the source-root package name / configured prefix stripped, since file
+        # importables are stored relative to the source root.
+        bases = [import_source]
         root_pkg = config.root.rstrip("/").replace("/", ".")
-        if import_source.startswith(root_pkg + "."):
-            candidates.append(import_source[len(root_pkg) + 1:])
-        if config.package_prefix and import_source.startswith(config.package_prefix + "."):
-            candidates.append(import_source[len(config.package_prefix) + 1:])
+        if root_pkg and root_pkg != "." and import_source.startswith(root_pkg + "."):
+            bases.append(import_source[len(root_pkg) + 1:])
+        if config.package_prefix:
+            if import_source.startswith(config.package_prefix + "."):
+                bases.append(import_source[len(config.package_prefix) + 1:])
+            elif import_source == config.package_prefix:
+                bases.append("")
+
+        # `from X import name` may import a submodule rather than a symbol. Try the
+        # submodule-qualified path first (more specific); if it isn't a real module
+        # it simply won't match and we fall back to X itself. This also resolves
+        # `from . import sub` and `from pkg import sub`, where X is the package root.
+        candidates: list[str] = []
+        if imported_name and imported_name != "*" and "." not in imported_name:
+            for b in bases:
+                candidates.append(f"{b}.{imported_name}" if b else imported_name)
+        candidates.extend(b for b in bases if b)
 
         for candidate in candidates:
-            if candidate in importable_map:
-                return importable_map[candidate]
+            hit = self._match_candidate(candidate, importable_map, config)
+            if hit:
+                return hit
 
-            for dotted, mod_name in importable_map.items():
-                if dotted.startswith(candidate + ".") or candidate.startswith(dotted + "."):
-                    return mod_name
+        return None
 
-            for mod in config.modules:
-                mod_prefix = mod.path.rstrip("/").replace("/", ".")
-                if candidate == mod_prefix or candidate.startswith(mod_prefix + "."):
-                    return mod.name
+    def _match_candidate(
+        self,
+        candidate: str,
+        importable_map: dict[str, str],
+        config: "GovernanceConfig",
+    ) -> Optional[str]:
+        if candidate in importable_map:
+            return importable_map[candidate]
+
+        for dotted, mod_name in importable_map.items():
+            if dotted.startswith(candidate + ".") or candidate.startswith(dotted + "."):
+                return mod_name
+
+        for mod in config.modules:
+            mod_prefix = mod.path.rstrip("/").replace("/", ".")
+            if not mod_prefix or mod_prefix == ".":
+                continue
+            if candidate == mod_prefix or candidate.startswith(mod_prefix + "."):
+                return mod.name
 
         return None
 
@@ -139,6 +171,13 @@ class PythonPatterns:
 
 
 def _resolve_relative_import(import_source: str, importing_file: str) -> Optional[str]:
+    """Resolve a relative import to a dotted path relative to the source root.
+
+    `dir_parts` is the package containing the importing file (its directory, since
+    file importables live in their own directory). N leading dots drop (N-1)
+    trailing components from that package. Returns "" for the package root and
+    None only when the dots reach above the source root.
+    """
     dots = 0
     for ch in import_source:
         if ch == ".":
@@ -147,12 +186,12 @@ def _resolve_relative_import(import_source: str, importing_file: str) -> Optiona
             break
 
     remainder = import_source[dots:]
-    parts = PurePosixPath(importing_file).parts[:-1]
+    dir_parts = PurePosixPath(importing_file).parts[:-1]
 
-    if dots > len(parts):
+    if dots - 1 > len(dir_parts):
         return None
 
-    base_parts = parts[: len(parts) - (dots - 1)]
+    base_parts = list(dir_parts[: len(dir_parts) - (dots - 1)])
     if remainder:
-        return ".".join(base_parts) + "." + remainder
+        base_parts.extend(remainder.split("."))
     return ".".join(base_parts)
