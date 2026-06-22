@@ -291,6 +291,19 @@ Self-contained dependency matrix with module metrics. Drop any governance JSON i
 **Choose tach** if you need interface enforcement or visibility control.
 **Choose code-governance** if you want transitive detection, AI-guided setup, CI integration, or zero-config scanning.
 
+### Known limitations
+
+- **Bare imports that shadow the standard library resolve to the stdlib.** A bare
+  `import json` / `from logging import x` is treated as the standard library even
+  if a local package shares that name, since that is how Python 3 resolves it in
+  the common case and avoids flooding the report with false edges (e.g. every
+  `import logging` linking to a local `logging/` package). Imports of the local
+  package via a relative (`from .json import x`) or package-prefixed
+  (`from myapp.json import x`) form still resolve normally — only the bare form is
+  treated as external.
+- **Dynamic imports are not tracked.** `importlib.import_module("a.b")` and
+  `__import__` use runtime strings the static analyzer cannot follow.
+
 ---
 
 <details>
