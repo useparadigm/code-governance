@@ -84,8 +84,14 @@ Modules: 8 | Files scanned: 47
 Violations (1):
   [E] [no_cycles] Circular dependency: payments -> notifications -> payments
 
-FAILED
+FAILED (1 error)
 ```
+
+`--auto` discovers **top-level packages** as modules and resolves absolute
+self-imports (`from myapp.models import X`), relative imports (`from . import sub`,
+`from ..pkg import Y`), and underscore-prefixed packages (`_internal`). Use
+`--depth N` for finer granularity (`--depth 2` splits two levels deep, `--depth 0`
+makes every directory its own module).
 
 Works on TypeScript too — language auto-detected from source:
 
@@ -97,7 +103,10 @@ Modules: 6 | Files scanned: 82
 ...
 ```
 
-`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs`, `.cjs` all supported. `tsconfig.json` path aliases (`@/*`, `extends` chains) are honored.
+`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs`, `.cjs` all supported.
+`tsconfig.json` path aliases (`@/*`, `extends` chains) are honored, and bare
+specifiers (`scenes/urls`) plus `~/` / `@/` src-root aliases resolve even without
+a `tsconfig.json` in zero-config scans.
 
 **Full setup** — generate config, review, enforce:
 
@@ -148,11 +157,46 @@ See [GitLab MR comments](#gitlab-mr-comments) to post the report as an MR note.
 
 | Rule | Example |
 |------|---------|
-| `enforce_cannot_depend_on` | `api` imports `billing` but `billing` is in `cannot_depend_on` |
 | `no_cycles` | `payments` -> `notifications` -> `payments` |
+| `enforce_cannot_depend_on` | `api` imports `billing` but `billing` is in `cannot_depend_on` (supports globs: `"tests_*"`) |
+| `can_only_depend_on` | `api` declares an allowlist; importing anything outside it fails (safe by default — new modules aren't silently allowed) |
 | `enforce_layers` | `db` (infrastructure) imports from `api` (presentation) |
+| `independence` | `billing` and `shipping` declared independent, but `billing` imports `shipping` |
+| `must_not_reach` | `web` transitively reaches `secrets` through a dependency chain |
+| `no_orphans` | `legacy` module has no incoming or outgoing dependencies (dead code) |
 | `max_public_surface` | 80% of `core`'s symbols used externally — too exposed |
 | `min_cohesion` | `utils` imports 90% from other modules — grab-bag module |
+
+### Rules reference
+
+```toml
+[[modules]]
+name = "api"
+path = "api/"
+cannot_depend_on = ["billing", "tests_*"]   # blacklist (exact names or globs)
+# can_only_depend_on = ["core", "db"]        # allowlist (alternative to blacklist)
+
+[rules]
+no_cycles = true
+enforce_cannot_depend_on = true
+no_orphans = false                            # warn on dead modules
+independence = [["billing", "shipping"]]      # mutually-independent module groups
+transitive = false                            # also check indirect dependency chains
+exclude_from_cycles = []
+exclude_from_orphans = ["__main__"]
+
+[[rules.must_not_reach]]                       # reachability contracts
+source = ["web"]
+target = ["secrets", "internal_*"]
+
+[rules.severity]                               # override per-rule severity
+no_orphans = "warning"                         # error | warning | info | off
+min_cohesion = "off"
+```
+
+Only **error**-severity violations fail the run (non-zero exit); warnings and info
+are advisory. Cycle detection and all rule output are **deterministic** — identical
+across runs and machines, so CI and agents get reproducible results.
 
 ## What happens in CI
 
@@ -246,6 +290,19 @@ Self-contained dependency matrix with module metrics. Drop any governance JSON i
 
 **Choose tach** if you need interface enforcement or visibility control.
 **Choose code-governance** if you want transitive detection, AI-guided setup, CI integration, or zero-config scanning.
+
+### Known limitations
+
+- **Bare imports that shadow the standard library resolve to the stdlib.** A bare
+  `import json` / `from logging import x` is treated as the standard library even
+  if a local package shares that name, since that is how Python 3 resolves it in
+  the common case and avoids flooding the report with false edges (e.g. every
+  `import logging` linking to a local `logging/` package). Imports of the local
+  package via a relative (`from .json import x`) or package-prefixed
+  (`from myapp.json import x`) form still resolve normally — only the bare form is
+  treated as external.
+- **Dynamic imports are not tracked.** `importlib.import_module("a.b")` and
+  `__import__` use runtime strings the static analyzer cannot follow.
 
 ---
 

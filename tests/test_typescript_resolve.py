@@ -83,3 +83,40 @@ def test_file_to_importable_strips_all_ts_js_extensions(tmp_path):
     assert p.file_to_importable("src/a/b.js") == "src/a/b"
     assert p.file_to_importable("src/a/b.jsx") == "src/a/b"
     assert p.file_to_importable("src/a/b.py") is None
+
+
+# ── Implicit base-URL fallback (zero-config --auto, no tsconfig) ──────────
+
+
+def _auto_patterns(tmp_path: Path) -> TypeScriptPatterns:
+    """No tsconfig — exercises the implicit src-relative fallback."""
+    cfg = GovernanceConfig(language=Language.TYPESCRIPT, root=".")
+    p = TypeScriptPatterns()
+    p.initialize(tmp_path, cfg)
+    return p
+
+
+def test_implicit_bare_specifier_resolves(tmp_path):
+    p = _auto_patterns(tmp_path)
+    cfg = GovernanceConfig(language=Language.TYPESCRIPT)
+    imap = {"scenes/urls": "scenes", "lib/api": "lib"}
+    assert p.resolve_import("scenes/urls", "lib/foo.ts", cfg, imap, {}) == "scenes"
+    assert p.resolve_import("lib/api", "scenes/foo.ts", cfg, imap, {}) == "lib"
+
+
+def test_implicit_tilde_and_at_alias_resolves(tmp_path):
+    p = _auto_patterns(tmp_path)
+    cfg = GovernanceConfig(language=Language.TYPESCRIPT)
+    imap = {"toolbar/config": "toolbar", "queries/schema": "queries"}
+    assert p.resolve_import("~/toolbar/config", "lib/a.ts", cfg, imap, {}) == "toolbar"
+    assert p.resolve_import("@/queries/schema", "lib/a.ts", cfg, imap, {}) == "queries"
+
+
+def test_implicit_does_not_resolve_third_party(tmp_path):
+    p = _auto_patterns(tmp_path)
+    cfg = GovernanceConfig(language=Language.TYPESCRIPT)
+    imap = {"lib/api": "lib"}
+    # bare packages and scoped packages must not match local modules
+    assert p.resolve_import("react", "lib/a.ts", cfg, imap, {}) is None
+    assert p.resolve_import("@posthog/icons", "lib/a.ts", cfg, imap, {}) is None
+    assert p.resolve_import("kea-router", "lib/a.ts", cfg, imap, {}) is None

@@ -86,6 +86,13 @@ def main():
         help="Zero-config scan: discover modules from source and check for cycles. No governance.toml needed.",
     )
     parser.add_argument(
+        "--depth",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Module granularity for --auto: top-level packages (1, default), deeper nesting (2+), or unlimited per-directory (0)",
+    )
+    parser.add_argument(
         "--transitive",
         action="store_true",
         help="Check transitive dependencies (detects indirect violations through dependency chains)",
@@ -392,7 +399,7 @@ def _handle_auto(args):
         print(f"Source root not found: {source_root}", file=sys.stderr)
         sys.exit(1)
 
-    report = run_auto_scan(source_root)
+    report = run_auto_scan(source_root, max_depth=args.depth)
 
     if args.format == "json":
         print(json.dumps(report.model_dump(), indent=2))
@@ -461,9 +468,12 @@ def _print_text_report(report, accepted_count: int = 0):
         print()
 
     if report.violations:
-        print(f"Violations ({len(report.violations)} new):" if accepted_count else f"Violations ({len(report.violations)}):")
+        errors = sum(1 for v in report.violations if v.severity.value == "error")
+        warnings = len(report.violations) - errors
+        header = f"Violations ({len(report.violations)} new):" if accepted_count else f"Violations ({len(report.violations)}):"
+        print(header)
         for v in report.violations:
-            icon = "E" if v.severity.value == "error" else "W"
+            icon = "E" if v.severity.value == "error" else ("W" if v.severity.value == "warning" else "I")
             print(f"  [{icon}] [{v.rule.value}] {v.detail}")
             for e in v.evidence[:5]:
                 fname = e.get("source_file", "")
@@ -477,7 +487,11 @@ def _print_text_report(report, accepted_count: int = 0):
         if accepted_count:
             print(f"\n  ({accepted_count} existing violations accepted from baseline)")
         print()
-        print("FAILED")
+        # Only error-severity violations fail the run; warnings/info are advisory.
+        if errors:
+            print(f"FAILED ({errors} error{'s' if errors != 1 else ''}" + (f", {warnings} warning{'s' if warnings != 1 else ''})" if warnings else ")"))
+        else:
+            print(f"PASSED ({warnings} warning{'s' if warnings != 1 else ''}, no errors)")
     else:
         if accepted_count:
             print(f"No new violations. ({accepted_count} existing accepted from baseline)")

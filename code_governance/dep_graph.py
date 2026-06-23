@@ -89,7 +89,8 @@ def build_dependency_graph(
 
         for imp in ext.imports:
             target_module = patterns.resolve_import(
-                imp.source_module, ext.file_path, config, importable_map, module_files
+                imp.source_module, ext.file_path, config, importable_map, module_files,
+                imp.imported_name,
             )
             if not target_module:
                 continue
