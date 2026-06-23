@@ -88,9 +88,9 @@ def main():
     parser.add_argument(
         "--depth",
         type=int,
-        default=1,
+        default=0,
         metavar="N",
-        help="Module granularity for --auto: top-level packages (1, default), deeper nesting (2+), or unlimited per-directory (0)",
+        help="Module granularity for --auto: per-directory (0, default), top-level packages (1), or split up to N levels (2+)",
     )
     parser.add_argument(
         "--transitive",

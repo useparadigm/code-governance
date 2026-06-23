@@ -11,11 +11,12 @@ django, scikit-learn, and PostHog (Python + TypeScript frontend).
   was treated as third-party and dropped, losing the majority of edges on real
   projects (PostHog reported 1 cycle among 1189 modules). `--auto` now derives the
   package name from the source root, recovering those edges.
-- **Top-level module granularity by default.** Per-directory discovery exploded
-  module counts (PostHog 1189, Django 190) and produced spurious parent/child
-  containment cycles. `--auto` now uses top-level packages (PostHog 41, Django 17),
-  a clean partition with no nesting cycles. `--depth N` controls granularity
-  (`0` = unlimited, the old behavior).
+- **`--depth N` controls module granularity for `--auto`.** Default stays
+  per-directory (fine-grained per-package metrics); `--depth 1` collapses to
+  top-level packages (PostHog 1189 → 41, Django 190 → 17), `--depth 2+` splits
+  N levels deep. Cycle output stays clean at any granularity because cycles are
+  reported per strongly connected component (below), so fine granularity no
+  longer floods the report.
 - **Underscore packages no longer dropped.** Single-underscore dirs/files
   (`_internal`, `_transports`, httpx's all-underscore layout) are kept; only
   dunder and hidden directories are skipped.

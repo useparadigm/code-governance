@@ -418,12 +418,13 @@ def _discover_modules(root: Path, extensions: set[str], max_depth: int = 1) -> l
     return result
 
 
-def run_auto_scan(source_root: str | Path, max_depth: int = 1) -> GovernanceReport:
-    """Zero-config scan: discover top-level modules and check for cycles.
+def run_auto_scan(source_root: str | Path, max_depth: int = 0) -> GovernanceReport:
+    """Zero-config scan: discover modules and check for cycles.
 
-    By default modules are the top-level packages under ``source_root`` (depth 1),
-    which matches how engineers reason about architecture and keeps output usable
-    on large codebases. Use ``max_depth`` to split deeper (``0`` = unlimited)."""
+    By default every source directory is its own module (``max_depth=0``), giving
+    fine-grained per-package metrics. Pass ``max_depth=1`` for top-level packages
+    only, or ``N`` to split up to N levels deep. Cycle output stays clean at any
+    granularity because cycles are reported per strongly connected component."""
     from code_governance.schemas import RulesConfig
 
     source_root = Path(source_root).resolve()

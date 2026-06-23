@@ -116,21 +116,28 @@ def build_dependency_graph(
     return graph
 
 
+def _sorted_modules_deepest_first(config: GovernanceConfig) -> list:
+    """Sort modules so the most specific (deepest) path matches first under
+    prefix matching. The "." catch-all is excluded — handle it separately."""
+    return sorted(
+        (m for m in config.modules if m.path not in (".", "./")),
+        key=lambda m: len(m.path.rstrip("/").split("/")),
+        reverse=True,
+    )
+
+
 def _build_file_to_module_map(
     extractions: list[FileExtractionResult],
     config: GovernanceConfig,
 ) -> dict[str, str]:
     mapping: dict[str, str] = {}
-    # Sort modules so specific paths match before "." catch-all
-    sorted_mods = sorted(config.modules, key=lambda m: (m.path == ".", m.path), reverse=False)
+    sorted_mods = _sorted_modules_deepest_first(config)
     catch_all = next((m for m in config.modules if m.path in (".", "./")), None)
 
     for ext in extractions:
         matched = False
         for mod in sorted_mods:
             mod_path = mod.path.rstrip("/")
-            if mod_path == ".":
-                continue
             if ext.file_path == mod_path or ext.file_path.startswith(mod_path + "/"):
                 mapping[ext.file_path] = mod.name
                 matched = True
@@ -150,15 +157,13 @@ def _build_importable_map(
     patterns: "LanguagePatterns",
 ) -> dict[str, str]:
     mapping: dict[str, str] = {}
-    sorted_mods = sorted(config.modules, key=lambda m: (m.path == ".", m.path), reverse=False)
+    sorted_mods = _sorted_modules_deepest_first(config)
     catch_all = next((m for m in config.modules if m.path in (".", "./")), None)
 
     for ext in extractions:
         matched_mod = None
         for mod in sorted_mods:
             mod_path = mod.path.rstrip("/")
-            if mod_path == ".":
-                continue
             if ext.file_path.startswith(mod_path + "/") or ext.file_path == mod_path:
                 matched_mod = mod
                 break

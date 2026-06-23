@@ -87,11 +87,12 @@ Violations (1):
 FAILED (1 error)
 ```
 
-`--auto` discovers **top-level packages** as modules and resolves absolute
-self-imports (`from myapp.models import X`), relative imports (`from . import sub`,
-`from ..pkg import Y`), and underscore-prefixed packages (`_internal`). Use
-`--depth N` for finer granularity (`--depth 2` splits two levels deep, `--depth 0`
-makes every directory its own module).
+`--auto` discovers a module for **every source directory** by default (fine-grained
+per-package metrics) and resolves absolute self-imports (`from myapp.models import X`),
+relative imports (`from . import sub`, `from ..pkg import Y`), and underscore-prefixed
+packages (`_internal`). Use `--depth 1` to collapse to top-level packages, or
+`--depth N` to split only N levels deep. Cycles are reported per strongly connected
+component, so fine granularity never floods the output.
 
 Works on TypeScript too — language auto-detected from source:
 
