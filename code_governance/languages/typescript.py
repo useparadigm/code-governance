@@ -28,10 +28,30 @@ class TypeScriptPatterns:
     def __init__(self) -> None:
         self._tsconfig: Optional[TsConfig] = None
         self._repo_root: Optional[Path] = None
+        self._source_root: Optional[Path] = None
 
     def initialize(self, repo_root: Path, config: "GovernanceConfig") -> None:
         self._repo_root = Path(repo_root).resolve()
+        # Files are scanned (and importables keyed) relative to the source root
+        # (repo_root/config.root), which differs from repo_root whenever `root`
+        # points at a subdir (e.g. root = "src" in a Next.js app). tsconfig alias
+        # targets must be normalized to this root, not the repo root, or they
+        # won't match importable keys and every resolved edge is silently dropped.
+        root = (config.root or ".").strip() if config else "."
+        self._source_root = (self._repo_root / root).resolve()
         self._tsconfig = load_tsconfig(self._repo_root, ["tsconfig.json", "tsconfig.base.json"])
+
+    def _to_scan_relative(self, absolute: Path) -> str:
+        """Express an absolute path relative to the scanned source root (preferred),
+        falling back to the repo root, so it matches source-root-relative importables."""
+        for base in (self._source_root, self._repo_root):
+            if base is None:
+                continue
+            try:
+                return str(absolute.relative_to(base)).replace("\\", "/")
+            except ValueError:
+                continue
+        return str(absolute).replace("\\", "/")
 
     def extract(self, root: SgNode, file_path: str) -> FileExtractionResult:
         imports = self._extract_imports(root)
@@ -135,20 +155,16 @@ class TypeScriptPatterns:
         if self._tsconfig.base_url:
             base = (base / self._tsconfig.base_url).resolve()
         absolute = (base / target).resolve()
-        try:
-            return str(absolute.relative_to(self._repo_root)).replace("\\", "/")
-        except ValueError:
-            return str(absolute).replace("\\", "/")
+        return self._to_scan_relative(absolute)
 
     def _from_base_url(self, import_source: str) -> str:
         if self._tsconfig is None or self._repo_root is None or not self._tsconfig.base_url:
             return import_source
         base = (self._tsconfig.config_dir / self._tsconfig.base_url).resolve()
         absolute = (base / import_source).resolve()
-        try:
-            return str(absolute.relative_to(self._repo_root)).replace("\\", "/")
-        except ValueError:
-            return import_source
+        if self._source_root is not None or self._repo_root is not None:
+            return self._to_scan_relative(absolute)
+        return import_source
 
     def _resolve_relative(self, import_source: str, importing_file: str) -> Optional[str]:
         importing_dir = PurePosixPath(importing_file).parent
