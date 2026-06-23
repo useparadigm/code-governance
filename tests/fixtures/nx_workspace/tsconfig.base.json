@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@org/shared": ["libs/shared/src/index.ts"],
+      "@org/marketplace": ["libs/marketplace/src/index.ts"]
+    }
+  }
+}

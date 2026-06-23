@@ -28,10 +28,30 @@ class TypeScriptPatterns:
     def __init__(self) -> None:
         self._tsconfig: Optional[TsConfig] = None
         self._repo_root: Optional[Path] = None
+        self._source_root: Optional[Path] = None
 
     def initialize(self, repo_root: Path, config: "GovernanceConfig") -> None:
         self._repo_root = Path(repo_root).resolve()
-        self._tsconfig = load_tsconfig(self._repo_root)
+        # Files are scanned (and importables keyed) relative to the source root
+        # (repo_root/config.root), which differs from repo_root whenever `root`
+        # points at a subdir (e.g. root = "src" in a Next.js app). tsconfig alias
+        # targets must be normalized to this root, not the repo root, or they
+        # won't match importable keys and every resolved edge is silently dropped.
+        root = (config.root or ".").strip() if config else "."
+        self._source_root = (self._repo_root / root).resolve()
+        self._tsconfig = load_tsconfig(self._repo_root, ["tsconfig.json", "tsconfig.base.json"])
+
+    def _to_scan_relative(self, absolute: Path) -> str:
+        """Express an absolute path relative to the scanned source root (preferred),
+        falling back to the repo root, so it matches source-root-relative importables."""
+        for base in (self._source_root, self._repo_root):
+            if base is None:
+                continue
+            try:
+                return str(absolute.relative_to(base)).replace("\\", "/")
+            except ValueError:
+                continue
+        return str(absolute).replace("\\", "/")
 
     def extract(self, root: SgNode, file_path: str) -> FileExtractionResult:
         imports = self._extract_imports(root)
@@ -57,6 +77,7 @@ class TypeScriptPatterns:
         config: "GovernanceConfig",
         importable_map: dict[str, str],
         module_files: dict[str, str],
+        imported_name: Optional[str] = None,
     ) -> Optional[str]:
         candidates = self._expand_candidates(import_source, importing_file, config)
         for cand in candidates:
@@ -80,9 +101,35 @@ class TypeScriptPatterns:
         elif import_source.startswith("/"):
             out.append(import_source.lstrip("/"))
         else:
-            if self._tsconfig and self._tsconfig.base_url:
+            has_base_url = bool(self._tsconfig and self._tsconfig.base_url)
+            if has_base_url:
                 out.append(self._from_base_url(import_source))
+            # Implicit base-URL fallback: many codebases import local modules with
+            # bare specifiers (`scenes/urls`, `lib/api`) or a src-root alias
+            # (`~/types`, `@/queries`) backed by tsconfig `baseUrl`/`paths`. When no
+            # tsconfig is discovered (the common case for zero-config --auto on a
+            # nested source dir), treat these as paths relative to the source root.
+            # Importable keys are source-root-relative, so this matches exactly;
+            # true third-party packages (`react`, `@posthog/icons`) simply find no
+            # matching file and produce no edge. Skipped when a tsconfig baseUrl is
+            # configured, since that already declares how bare specifiers resolve.
+            if not has_base_url:
+                out.extend(self._implicit_src_relative(import_source))
         return out
+
+    @staticmethod
+    def _implicit_src_relative(import_source: str) -> list[str]:
+        for alias in ("~/", "@/"):
+            if import_source.startswith(alias):
+                return [import_source[len(alias):]]
+        if import_source in ("~", "@"):
+            return []
+        first = import_source[0]
+        # bare specifier with a path segment (local module), not a scoped package
+        # (@scope/pkg) and not a single-word bare package (`react`, `kea`).
+        if (first.isalnum() or first == "_") and "/" in import_source:
+            return [import_source]
+        return []
 
     def _apply_alias(self, import_source: str) -> list[str]:
         if not self._tsconfig or not self._tsconfig.paths:
@@ -108,20 +155,16 @@ class TypeScriptPatterns:
         if self._tsconfig.base_url:
             base = (base / self._tsconfig.base_url).resolve()
         absolute = (base / target).resolve()
-        try:
-            return str(absolute.relative_to(self._repo_root)).replace("\\", "/")
-        except ValueError:
-            return str(absolute).replace("\\", "/")
+        return self._to_scan_relative(absolute)
 
     def _from_base_url(self, import_source: str) -> str:
         if self._tsconfig is None or self._repo_root is None or not self._tsconfig.base_url:
             return import_source
         base = (self._tsconfig.config_dir / self._tsconfig.base_url).resolve()
         absolute = (base / import_source).resolve()
-        try:
-            return str(absolute.relative_to(self._repo_root)).replace("\\", "/")
-        except ValueError:
-            return import_source
+        if self._source_root is not None or self._repo_root is not None:
+            return self._to_scan_relative(absolute)
+        return import_source
 
     def _resolve_relative(self, import_source: str, importing_file: str) -> Optional[str]:
         importing_dir = PurePosixPath(importing_file).parent
@@ -148,10 +191,28 @@ class TypeScriptPatterns:
         index_key = f"{candidate}/index"
         if index_key in importable_map:
             return importable_map[index_key]
-        for key, mod in importable_map.items():
-            if key.startswith(candidate + "/") or candidate.startswith(key + "/"):
-                return mod
-        return None
+        # Case A — candidate deeper than a known importable: longest ancestor.
+        parts = candidate.split("/")
+        for k in range(len(parts) - 1, 0, -1):
+            ancestor = "/".join(parts[:k])
+            if ancestor in importable_map:
+                return importable_map[ancestor]
+        # Case B — candidate is a directory containing known importables. Served
+        # from a memoized prefix index (sorted -> deterministic), not an O(N) scan.
+        return self._prefix_index(importable_map).get(candidate)
+
+    def _prefix_index(self, importable_map: dict[str, str]) -> dict[str, str]:
+        if getattr(self, "_prefix_index_map", None) is importable_map:
+            return self._prefix_index_cache
+        index: dict[str, str] = {}
+        for key in sorted(importable_map):
+            mod = importable_map[key]
+            parts = key.split("/")
+            for k in range(1, len(parts)):
+                index.setdefault("/".join(parts[:k]), mod)
+        self._prefix_index_map = importable_map
+        self._prefix_index_cache = index
+        return index
 
     def _extract_imports(self, root: SgNode) -> list[ImportInfo]:
         results: list[ImportInfo] = []

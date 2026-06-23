@@ -6,7 +6,7 @@ from code_governance.config import load_config
 from code_governance.dep_graph import build_dependency_graph
 from code_governance.extractor import extract_directory
 from code_governance.languages import get_patterns
-from code_governance.rules import ALL_RULES, compute_module_metrics
+from code_governance.rules import compute_module_metrics, run_all_rules
 from code_governance.schemas import (
     DependencyTarget,
     DiscoverReport,
@@ -31,9 +31,7 @@ def run_governance(config_path: str | Path, *, config: GovernanceConfig | None =
 
     graph = build_dependency_graph(extractions, config, patterns=patterns)
 
-    violations: list[Violation] = []
-    for rule_fn in ALL_RULES:
-        violations.extend(rule_fn(graph, config))
+    violations = run_all_rules(graph, config)
 
     metrics = compute_module_metrics(graph, config)
 
@@ -81,9 +79,7 @@ def run_governance_diff(config_path: str | Path, git_ref: str = "HEAD", *, confi
 
     graph = build_dependency_graph(all_extractions, config, patterns=patterns)
 
-    violations: list[Violation] = []
-    for rule_fn in ALL_RULES:
-        violations.extend(rule_fn(graph, config))
+    violations = run_all_rules(graph, config)
 
     changed_modules = set()
     for ext in changed_extractions:
@@ -180,6 +176,9 @@ def config_to_toml(config: GovernanceConfig) -> str:
         lines.append(f'path = "{mod.path}"')
         deps = ", ".join(f'"{d}"' for d in mod.cannot_depend_on)
         lines.append(f"cannot_depend_on = [{deps}]")
+        if mod.can_only_depend_on is not None:
+            allow = ", ".join(f'"{d}"' for d in mod.can_only_depend_on)
+            lines.append(f"can_only_depend_on = [{allow}]")
         if mod.layer:
             lines.append(f'layer = "{mod.layer}"')
         lines.append("")
@@ -348,50 +347,84 @@ def populate_cannot_depend_on(config_path: str | Path) -> GovernanceConfig:
     return _seed_cannot_depend_on(config, source_root)
 
 
-def _discover_modules_recursive(root: Path, extensions: set[str]) -> list:
-    """Recursively discover all directories containing source files of the given language."""
+def _is_skippable_part(part: str) -> bool:
+    """Directory components that should never contribute modules: build/cache dirs,
+    dunder dirs (__pycache__), and hidden dirs. Single-underscore dirs like
+    `_transports` or `_internal` ARE real modules and are kept."""
+    return part in _SKIP_DIRS or part.startswith("__") or part.startswith(".")
+
+
+def _iter_source_files(root: Path, extensions: set[str]):
+    """Yield (relative_dir_parts, file) for every source file under root, skipping
+    build/cache/hidden directories. Single-underscore files and dirs are kept."""
+    for f in root.rglob("*"):
+        if not f.is_file() or f.suffix not in extensions:
+            continue
+        rel = f.relative_to(root)
+        dir_parts = rel.parts[:-1]
+        if any(_is_skippable_part(p) for p in dir_parts):
+            continue
+        yield dir_parts, f
+
+
+def _discover_modules(root: Path, extensions: set[str], max_depth: int = 1) -> list:
+    """Discover modules up to ``max_depth`` directory levels under ``root``.
+
+    Each directory whose depth is <= max_depth (and which contains source files,
+    directly or nested) becomes one module; files in deeper sub-directories are
+    attributed to their nearest ancestor module. This produces a clean partition
+    (no parent/child module overlap), so nested packages do not generate spurious
+    "cycles". Loose source files at the root are grouped into a single module
+    named after the root directory.
+
+    ``max_depth <= 0`` means unlimited depth — every source directory becomes its
+    own module (the original fine-grained behavior, available via --depth 0).
+    """
     from code_governance.schemas import ModuleConfig
 
-    modules = []
+    modules: dict[str, str] = {}
+    has_root_loose = False
 
-    def _walk(directory: Path, prefix: str):
-        has_src = any(
-            f.suffix in extensions and not f.name.startswith("_")
-            for f in directory.iterdir()
-            if f.is_file()
-        )
-        if has_src and prefix:
-            modules.append(ModuleConfig(
-                name=prefix.replace("/", ".").rstrip("."),
-                path=prefix,
-                cannot_depend_on=[],
-            ))
+    for dir_parts, _f in _iter_source_files(root, extensions):
+        if not dir_parts:
+            has_root_loose = True
+            continue
+        depth = len(dir_parts) if max_depth <= 0 else min(len(dir_parts), max_depth)
+        mod_parts = dir_parts[:depth]
+        name = ".".join(mod_parts)
+        modules[name] = "/".join(mod_parts) + "/"
 
-        for child in sorted(directory.iterdir()):
-            if not child.is_dir():
-                continue
-            if child.name.startswith(".") or child.name.startswith("_"):
-                continue
-            if child.name in _SKIP_DIRS:
-                continue
-            _walk(child, f"{prefix}{child.name}/")
+    result = [
+        ModuleConfig(name=name, path=path, cannot_depend_on=[])
+        for name, path in sorted(modules.items())
+    ]
 
-    _walk(root, "")
+    if has_root_loose:
+        taken = set(modules)
+        root_name = root.name or "core"
+        # Guarantee a unique name even if a child package already uses it (e.g. a
+        # source root literally named `core` that also contains a `core/` subdir),
+        # so two distinct directories never collapse into one module.
+        if root_name in taken:
+            base = "core" if root_name != "core" else "root"
+            candidate = base
+            i = 2
+            while candidate in taken:
+                candidate = f"{base}{i}"
+                i += 1
+            root_name = candidate
+        result.insert(0, ModuleConfig(name=root_name, path=".", cannot_depend_on=[]))
 
-    if not modules:
-        has_root_files = any(
-            f.suffix in extensions and not f.name.startswith("_")
-            for f in root.iterdir()
-            if f.is_file()
-        )
-        if has_root_files:
-            modules.append(ModuleConfig(name="core", path=".", cannot_depend_on=[]))
-
-    return modules
+    return result
 
 
-def run_auto_scan(source_root: str | Path) -> GovernanceReport:
-    """Zero-config scan: discover modules at every directory level, check for cycles."""
+def run_auto_scan(source_root: str | Path, max_depth: int = 0) -> GovernanceReport:
+    """Zero-config scan: discover modules and check for cycles.
+
+    By default every source directory is its own module (``max_depth=0``), giving
+    fine-grained per-package metrics. Pass ``max_depth=1`` for top-level packages
+    only, or ``N`` to split up to N levels deep. Cycle output stays clean at any
+    granularity because cycles are reported per strongly connected component."""
     from code_governance.schemas import RulesConfig
 
     source_root = Path(source_root).resolve()
@@ -400,11 +433,15 @@ def run_auto_scan(source_root: str | Path) -> GovernanceReport:
 
     language = detect_language(source_root)
     extensions = _LANG_EXTENSIONS[language.value]
-    modules = _discover_modules_recursive(source_root, extensions)
+    modules = _discover_modules(source_root, extensions, max_depth=max_depth)
 
     config = GovernanceConfig(
         root=".",
         language=language,
+        # The source-root directory name is the importable package name, so absolute
+        # self-imports (`from posthog.models import X`) resolve to local modules
+        # instead of being dropped as third-party imports.
+        package_prefix=source_root.name or None,
         modules=modules,
         rules=RulesConfig(
             no_cycles=True,
@@ -418,9 +455,7 @@ def run_auto_scan(source_root: str | Path) -> GovernanceReport:
     extractions = extract_directory(source_root, config.language, config.rules.exclude_test_files, patterns=patterns)
     graph = build_dependency_graph(extractions, config, patterns=patterns)
 
-    violations: list[Violation] = []
-    for rule_fn in ALL_RULES:
-        violations.extend(rule_fn(graph, config))
+    violations = run_all_rules(graph, config)
 
     metrics = compute_module_metrics(graph, config)
 

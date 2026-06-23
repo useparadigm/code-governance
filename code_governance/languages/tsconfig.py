@@ -15,28 +15,31 @@ class TsConfig:
     config_dir: Path = field(default_factory=Path)
 
 
-def load_tsconfig(repo_root: Path, filename: str = "tsconfig.json") -> Optional[TsConfig]:
-    path = repo_root / filename
-    if not path.exists():
-        return None
-    try:
-        merged = _load_with_extends(path, visited=set())
-    except Exception as e:
-        print(f"Warning: failed to parse {path}: {e}", file=sys.stderr)
-        return None
-    if merged is None:
-        return None
+def load_tsconfig(repo_root: Path, filename: str | list[str] = "tsconfig.json") -> Optional[TsConfig]:
+    filenames = [filename] if isinstance(filename, str) else filename
+    for fname in filenames:
+        path = repo_root / fname
+        if not path.exists():
+            continue
+        try:
+            merged = _load_with_extends(path, visited=set())
+        except Exception as e:
+            print(f"Warning: failed to parse {path}: {e}", file=sys.stderr)
+            continue
+        if merged is None:
+            continue
 
-    compiler_options = merged.get("compilerOptions", {})
-    base_url = compiler_options.get("baseUrl")
-    raw_paths = compiler_options.get("paths", {})
-    paths: dict[str, list[str]] = {}
-    if isinstance(raw_paths, dict):
-        for key, value in raw_paths.items():
-            if isinstance(value, list):
-                paths[key] = [str(v) for v in value]
+        compiler_options = merged.get("compilerOptions", {})
+        base_url = compiler_options.get("baseUrl")
+        raw_paths = compiler_options.get("paths", {})
+        paths: dict[str, list[str]] = {}
+        if isinstance(raw_paths, dict):
+            for key, value in raw_paths.items():
+                if isinstance(value, list):
+                    paths[key] = [str(v) for v in value]
 
-    return TsConfig(base_url=base_url, paths=paths, config_dir=path.parent.resolve())
+        return TsConfig(base_url=base_url, paths=paths, config_dir=path.parent.resolve())
+    return None
 
 
 def _load_with_extends(path: Path, visited: set[Path]) -> Optional[dict]:

@@ -1,6 +1,6 @@
 [project]
 name = "code-governance"
-version = "0.4.1"
+version = "0.5.0"
 description = "AST-based governance engine for enforcing module boundaries and architecture rules in Python and TypeScript codebases"
 requires-python = ">=3.10"
 license = "MIT"

@@ -86,12 +86,45 @@ def main():
         help="Zero-config scan: discover modules from source and check for cycles. No governance.toml needed.",
     )
     parser.add_argument(
+        "--depth",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Module granularity for --auto: per-directory (0, default), top-level packages (1), or split up to N levels (2+)",
+    )
+    parser.add_argument(
         "--transitive",
         action="store_true",
         help="Check transitive dependencies (detects indirect violations through dependency chains)",
     )
+    parser.add_argument(
+        "--affected-tests",
+        metavar="PATH",
+        nargs="?",
+        const=".",
+        help="Find test files affected by git changes across project boundaries (zero-config, TypeScript)",
+    )
+    parser.add_argument(
+        "--base-ref",
+        default="HEAD",
+        help="Git ref to diff against for --affected-tests (default: HEAD)",
+    )
+    parser.add_argument(
+        "--nx",
+        action="store_true",
+        help="Output nx run commands instead of plain jest commands (for NX monorepos)",
+    )
+    parser.add_argument(
+        "--run",
+        action="store_true",
+        help="Execute the generated test commands after analysis",
+    )
 
     args = parser.parse_args()
+
+    if args.affected_tests is not None:
+        _handle_affected_tests(args)
+        return
 
     if args.auto is not None:
         _handle_auto(args)
@@ -304,13 +337,69 @@ def _handle_advise(args, report=None):
         print(advice.to_markdown())
 
 
+def _handle_affected_tests(args):
+    from code_governance.test_targeting import execute_commands, run_affected_tests
+
+    source_root = Path(args.affected_tests).resolve()
+    if not source_root.exists():
+        print(f"Source root not found: {source_root}", file=sys.stderr)
+        sys.exit(1)
+
+    result = run_affected_tests(source_root, args.base_ref, nx=args.nx)
+
+    if args.format == "json":
+        data = {
+            "changed_files": result.changed_files,
+            "affected_files": result.affected_files,
+            "test_files": result.test_files,
+            "scopes": [
+                {"config": s.config_path, "tests": s.test_files}
+                for s in result.scopes
+            ],
+            "commands": result.commands,
+        }
+        print(json.dumps(data, indent=2))
+    else:
+        _print_affected_tests(result)
+
+    if args.run and result.commands:
+        exit_code = execute_commands(result.commands, source_root)
+        sys.exit(exit_code)
+
+
+def _print_affected_tests(result):
+    print(f"Changed files ({len(result.changed_files)}):")
+    for f in result.changed_files:
+        print(f"  {f}")
+    print()
+
+    print(f"Affected files ({len(result.affected_files)}):")
+    for f in result.affected_files:
+        print(f"  {f}")
+    print()
+
+    print(f"Tests to run ({len(result.test_files)}):")
+    for scope in result.scopes:
+        label = scope.root_dir or "root"
+        for t in scope.test_files:
+            print(f"  [{label}] {t}")
+    print()
+
+    if result.commands:
+        print("Commands:")
+        for cmd in result.commands:
+            print(f"  {cmd}")
+    else:
+        print("No test files affected.")
+
+
 def _handle_auto(args):
     source_root = Path(args.auto).resolve()
     if not source_root.exists():
         print(f"Source root not found: {source_root}", file=sys.stderr)
         sys.exit(1)
 
-    report = run_auto_scan(source_root)
+    report = run_auto_scan(source_root, max_depth=args.depth)
 
     if args.format == "json":
         print(json.dumps(report.model_dump(), indent=2))
@@ -379,9 +468,12 @@ def _print_text_report(report, accepted_count: int = 0):
         print()
 
     if report.violations:
-        print(f"Violations ({len(report.violations)} new):" if accepted_count else f"Violations ({len(report.violations)}):")
+        errors = sum(1 for v in report.violations if v.severity.value == "error")
+        warnings = len(report.violations) - errors
+        header = f"Violations ({len(report.violations)} new):" if accepted_count else f"Violations ({len(report.violations)}):"
+        print(header)
         for v in report.violations:
-            icon = "E" if v.severity.value == "error" else "W"
+            icon = "E" if v.severity.value == "error" else ("W" if v.severity.value == "warning" else "I")
             print(f"  [{icon}] [{v.rule.value}] {v.detail}")
             for e in v.evidence[:5]:
                 fname = e.get("source_file", "")
@@ -395,7 +487,11 @@ def _print_text_report(report, accepted_count: int = 0):
         if accepted_count:
             print(f"\n  ({accepted_count} existing violations accepted from baseline)")
         print()
-        print("FAILED")
+        # Only error-severity violations fail the run; warnings/info are advisory.
+        if errors:
+            print(f"FAILED ({errors} error{'s' if errors != 1 else ''}" + (f", {warnings} warning{'s' if warnings != 1 else ''})" if warnings else ")"))
+        else:
+            print(f"PASSED ({warnings} warning{'s' if warnings != 1 else ''}, no errors)")
     else:
         if accepted_count:
             print(f"No new violations. ({accepted_count} existing accepted from baseline)")

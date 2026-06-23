@@ -30,6 +30,7 @@ class LanguagePatterns(Protocol):
         config: "GovernanceConfig",
         importable_map: dict[str, str],
         module_files: dict[str, str],
+        imported_name: Optional[str] = None,
     ) -> Optional[str]: ...
 
     def initialize(self, repo_root: Path, config: "GovernanceConfig") -> None: ...

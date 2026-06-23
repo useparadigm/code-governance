@@ -1,0 +1,1 @@
+{"name": "backend", "targets": {"test": {"executor": "@nx/jest:jest"}}}
