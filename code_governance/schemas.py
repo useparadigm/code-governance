@@ -131,6 +131,10 @@ class Violation(BaseModel):
     detail: str
     severity: Severity = Severity.ERROR
     evidence: list[dict] = []
+    # All files involved in the violation, beyond what evidence samples cover —
+    # e.g. every member of a file-cycle SCC, not just the representative cycle.
+    # Used by --diff to decide whether a changed file participates.
+    files: list[str] = []
 
 
 class ModuleMetrics(BaseModel):

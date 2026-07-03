@@ -94,6 +94,12 @@ def run_governance_diff(config_path: str | Path, git_ref: str = "HEAD", *, confi
         if v.module in changed_modules:
             filtered.append(v)
             continue
+        # File-scoped violations (e.g. file cycles) list every involved file in
+        # v.files; a changed file anywhere in the SCC keeps the violation, even
+        # off the representative cycle that evidence samples.
+        if v.files and changed_files & set(v.files):
+            filtered.append(v)
+            continue
         if v.evidence:
             relevant = [e for e in v.evidence if e.get("source_file") in changed_files]
             if relevant:

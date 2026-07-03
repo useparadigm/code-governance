@@ -245,6 +245,42 @@ def test_typescript_type_only_imports_do_not_count(tmp_path):
     assert check_no_file_cycles(graph, config) == []
 
 
+def test_typescript_export_type_star_does_not_count(tmp_path):
+    # `export type * from ...` parses its `type` token as an ERROR node in the
+    # grammar; it must still be recognized as type-only (erased at runtime).
+    _write(tmp_path, {
+        "src/x.ts": "export type * from './y'\nexport const x = 1\n",
+        "src/y.ts": "import { x } from './x'\nexport type Y = number\n",
+    })
+    config = GovernanceConfig(
+        root=".",
+        language=Language.TYPESCRIPT,
+        modules=[ModuleConfig(name="src", path="src/")],
+        rules=RulesConfig(no_file_cycles=True),
+    )
+    graph = _scan(tmp_path, config)
+    assert check_no_file_cycles(graph, config) == []
+
+
+def test_violation_files_lists_full_scc(tmp_path):
+    # SCC {a, b, c} where the representative cycle is a -> b -> a: member c is
+    # off the representative path but must still appear in violation.files so
+    # --diff keeps the violation when only c changed.
+    _write(tmp_path, {
+        "pkg/a.py": "from pkg.b import B\n",
+        "pkg/b.py": "from pkg.a import A\nfrom pkg.c import C\n",
+        "pkg/c.py": "from pkg.a import A\n",
+    })
+    config = _py_config()
+    graph = _scan(tmp_path, config)
+    violations = check_no_file_cycles(graph, config)
+    assert len(violations) == 1
+    v = violations[0]
+    assert set(v.files) == {"pkg/a.py", "pkg/b.py", "pkg/c.py"}
+    evidence_files = {e["source_file"] for e in v.evidence}
+    assert "pkg/c.py" not in evidence_files  # off the representative cycle
+
+
 def test_auto_scan_reports_file_cycles(tmp_path):
     _write(tmp_path, {
         "app/a.py": "from app.b import B\nclass A: pass\n",

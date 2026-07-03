@@ -282,11 +282,16 @@ class TypeScriptPatterns:
 
 def _is_type_only_statement(node: SgNode, keyword: str) -> bool:
     """True for statement-level `import type` / `export type` forms, detected
-    from the `type` keyword token immediately after the import/export keyword."""
+    from the `type` keyword token immediately after the import/export keyword.
+    The grammar exposes the token as kind `type` in clause forms but as an
+    ERROR node in `export type * from ...` forms — accept both."""
     children = node.children()
     for i, child in enumerate(children):
         if child.kind() == keyword:
-            return i + 1 < len(children) and children[i + 1].kind() == "type"
+            if i + 1 >= len(children):
+                return False
+            nxt = children[i + 1]
+            return nxt.kind() == "type" or (nxt.kind() == "ERROR" and nxt.text().strip() == "type")
     return False
 
 

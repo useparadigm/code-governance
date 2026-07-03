@@ -126,6 +126,7 @@ def check_no_file_cycles(graph: DependencyGraph, config: GovernanceConfig) -> li
             module=scc[0],
             detail=detail,
             evidence=evidence,
+            files=scc,
         ))
 
     return violations
