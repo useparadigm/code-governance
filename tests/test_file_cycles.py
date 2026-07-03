@@ -206,6 +206,22 @@ def test_import_on_line_after_type_checking_block_counts(tmp_path):
     assert "pkg/c.py" not in violations[0].detail
 
 
+def test_negated_type_checking_still_counts(tmp_path):
+    # `if not typing.TYPE_CHECKING:` executes at runtime — its imports are
+    # real edges, not type-only.
+    _write(tmp_path, {
+        "pkg/a.py": (
+            "import typing\n"
+            "if not typing.TYPE_CHECKING:\n"
+            "    from pkg.b import B\n"
+        ),
+        "pkg/b.py": "from pkg.a import A\n",
+    })
+    config = _py_config()
+    graph = _scan(tmp_path, config)
+    assert len(check_no_file_cycles(graph, config)) == 1
+
+
 def test_type_checking_else_branch_still_counts(tmp_path):
     # `else:` of a TYPE_CHECKING block executes at runtime — the classic
     # fallback-import pattern must keep its edge.

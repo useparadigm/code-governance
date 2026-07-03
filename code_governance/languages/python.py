@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re as _re
 import sys
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Optional
@@ -231,8 +232,11 @@ def _type_checking_ranges(root: SgNode) -> list[tuple[int, int]]:
         condition = node.field("condition")
         if condition is None:
             continue
-        cond_text = condition.text()
-        if cond_text == "TYPE_CHECKING" or cond_text.endswith(".TYPE_CHECKING"):
+        cond_text = condition.text().strip()
+        # Exact dotted name only (TYPE_CHECKING, typing.TYPE_CHECKING, ...).
+        # Compound or negated conditions (`not typing.TYPE_CHECKING`,
+        # `DEBUG and TYPE_CHECKING`) can execute at runtime — don't match.
+        if _re.fullmatch(r"(?:\w+\.)*TYPE_CHECKING", cond_text):
             # Only the `if` body is type-only; an `else:` branch still runs at
             # runtime (the fallback-import pattern), so use the consequence
             # block's range, not the whole statement.
