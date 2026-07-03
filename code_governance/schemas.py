@@ -20,6 +20,7 @@ class Severity(str, Enum):
 
 class RuleKind(str, Enum):
     NO_CYCLES = "no_cycles"
+    NO_FILE_CYCLES = "no_file_cycles"
     ENFORCE_LAYERS = "enforce_layers"
     ENFORCE_CANNOT_DEPEND_ON = "enforce_cannot_depend_on"
     CAN_ONLY_DEPEND_ON = "can_only_depend_on"
@@ -54,6 +55,11 @@ class ReachConstraint(BaseModel):
 
 class RulesConfig(BaseModel):
     no_cycles: bool = True
+    # File-level circular imports (like madge --circular): cycles between
+    # individual files, regardless of module boundaries. These are runtime
+    # hazards (import loops), not just architectural smells. Opt-in for
+    # config-driven runs; enabled by default in --auto scans.
+    no_file_cycles: bool = False
     enforce_layers: bool = False
     enforce_cannot_depend_on: bool = True
     # Enabled, but inert unless a module sets `can_only_depend_on` (default None).
@@ -88,6 +94,11 @@ class ImportInfo:
     imported_name: Optional[str] = None
     line: int = 0
     raw_statement: str = ""
+    # Import that never executes at runtime: Python `if TYPE_CHECKING:` blocks,
+    # TypeScript `import type` / `export type`. Still counts as architectural
+    # coupling (module-level rules), but cannot cause a runtime import loop, so
+    # file-level cycle detection skips it.
+    type_only: bool = False
 
 
 @dataclass

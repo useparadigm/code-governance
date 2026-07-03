@@ -207,12 +207,16 @@ class TypeScriptPatterns:
             source = _first_string_child(node)
             if source is None:
                 continue
+            # `import type ...` is erased at compile time — it can never cause a
+            # runtime import loop. (Per-specifier `import { type X }` may still
+            # carry runtime imports, so only the statement form counts.)
+            type_only = _is_type_only_statement(node, "import")
             names = _collect_import_names(node)
             if names:
                 for name in names:
-                    results.append(ImportInfo(source_module=source, imported_name=name, line=line, raw_statement=raw))
+                    results.append(ImportInfo(source_module=source, imported_name=name, line=line, raw_statement=raw, type_only=type_only))
             else:
-                results.append(ImportInfo(source_module=source, line=line, raw_statement=raw))
+                results.append(ImportInfo(source_module=source, line=line, raw_statement=raw, type_only=type_only))
 
         for node in root.find_all(kind="export_statement"):
             source = _export_source(node)
@@ -220,12 +224,13 @@ class TypeScriptPatterns:
                 continue
             line = node.range().start.line + 1
             raw = node.text()
+            type_only = _is_type_only_statement(node, "export")
             names = _collect_export_names(node)
             if names:
                 for name in names:
-                    results.append(ImportInfo(source_module=source, imported_name=name, line=line, raw_statement=raw))
+                    results.append(ImportInfo(source_module=source, imported_name=name, line=line, raw_statement=raw, type_only=type_only))
             else:
-                results.append(ImportInfo(source_module=source, line=line, raw_statement=raw))
+                results.append(ImportInfo(source_module=source, line=line, raw_statement=raw, type_only=type_only))
 
         for node in root.find_all(pattern="require($MOD)"):
             mod_node = node.get_match("MOD")
@@ -273,6 +278,16 @@ class TypeScriptPatterns:
                     if name_node and name_node.kind() == "identifier":
                         symbols.append(name_node.text())
         return symbols
+
+
+def _is_type_only_statement(node: SgNode, keyword: str) -> bool:
+    """True for statement-level `import type` / `export type` forms, detected
+    from the `type` keyword token immediately after the import/export keyword."""
+    children = node.children()
+    for i, child in enumerate(children):
+        if child.kind() == keyword:
+            return i + 1 < len(children) and children[i + 1].kind() == "type"
+    return False
 
 
 def _first_string_child(node: SgNode) -> Optional[str]:

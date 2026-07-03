@@ -17,6 +17,7 @@ from code_governance.schemas import GovernanceConfig, RuleKind, Violation
 RULE_ICON = {
     RuleKind.ENFORCE_CANNOT_DEPEND_ON: "🔗",
     RuleKind.NO_CYCLES: "🔄",
+    RuleKind.NO_FILE_CYCLES: "🔁",
     RuleKind.ENFORCE_LAYERS: "📐",
     RuleKind.MAX_PUBLIC_SURFACE: "📡",
     RuleKind.MIN_COHESION: "🧩",

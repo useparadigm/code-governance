@@ -88,6 +88,49 @@ def check_no_cycles(graph: DependencyGraph, config: GovernanceConfig) -> list[Vi
     return violations
 
 
+def check_no_file_cycles(graph: DependencyGraph, config: GovernanceConfig) -> list[Violation]:
+    """File-level circular imports (madge --circular equivalent). Operates on the
+    resolved file -> file graph, so it catches cycles between files inside the
+    same module that module-level cycle detection cannot see."""
+    if not config.rules.no_file_cycles:
+        return []
+
+    adjacency: dict[str, set[str]] = {
+        src: {tgt for tgt in targets if tgt != src}
+        for src, targets in graph.file_edges.items()
+    }
+
+    sccs = _strongly_connected_components(adjacency)
+
+    violations: list[Violation] = []
+    for scc in sccs:
+        if len(scc) < 2:
+            continue
+        cycle = _representative_cycle(scc, adjacency)
+        cycle_str = " -> ".join(cycle + [cycle[0]])
+        if len(scc) > len(set(cycle)):
+            listed = ", ".join(scc[:10]) + (", ..." if len(scc) > 10 else "")
+            detail = (
+                f"Circular file dependency among {len(scc)} files "
+                f"{{{listed}}}: {cycle_str}"
+            )
+        else:
+            detail = f"Circular file dependency: {cycle_str}"
+        evidence: list[dict] = []
+        for i in range(len(cycle)):
+            src = cycle[i]
+            tgt = cycle[(i + 1) % len(cycle)]
+            evidence.extend(_evidence_for_edge(graph.file_edge_details, src, tgt))
+        violations.append(Violation(
+            rule=RuleKind.NO_FILE_CYCLES,
+            module=scc[0],
+            detail=detail,
+            evidence=evidence,
+        ))
+
+    return violations
+
+
 def check_enforce_layers(graph: DependencyGraph, config: GovernanceConfig) -> list[Violation]:
     if not config.rules.enforce_layers or not config.layers.order:
         return []
@@ -389,6 +432,7 @@ def compute_module_metrics(graph: DependencyGraph, config: GovernanceConfig) -> 
 
 ALL_RULES = [
     check_no_cycles,
+    check_no_file_cycles,
     check_enforce_layers,
     check_enforce_cannot_depend_on,
     check_can_only_depend_on,
@@ -448,7 +492,9 @@ def _strongly_connected_components(adjacency: dict[str, set[str]]) -> list[list[
     neighbors = {n: sorted(adjacency.get(n, set())) for n in adjacency}
 
     import sys as _sys
-    _sys.setrecursionlimit(max(10000, _sys.getrecursionlimit()))
+    # File-level graphs can hold tens of thousands of nodes and Tarjan recurses
+    # once per node on a chain, so scale the limit with graph size.
+    _sys.setrecursionlimit(max(10000, len(adjacency) + 1000, _sys.getrecursionlimit()))
 
     def strongconnect(v: str):
         index_of[v] = low[v] = counter[0]

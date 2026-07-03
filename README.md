@@ -93,6 +93,11 @@ self-imports (`from myapp.models import X`), relative imports (`from . import su
 `--depth N` for finer granularity (`--depth 2` splits two levels deep, `--depth 0`
 makes every directory its own module).
 
+`--auto` also checks **file-level cycles** (`no_file_cycles`) — circular imports
+between individual files, the madge `--circular` equivalent. These are detected
+independently of module granularity, so a cycle between two files inside the same
+package is caught even at `--depth 1`.
+
 Works on TypeScript too — language auto-detected from source:
 
 ```bash
@@ -158,6 +163,7 @@ See [GitLab MR comments](#gitlab-mr-comments) to post the report as an MR note.
 | Rule | Example |
 |------|---------|
 | `no_cycles` | `payments` -> `notifications` -> `payments` |
+| `no_file_cycles` | `payments/stripe.py` -> `payments/retry.py` -> `payments/stripe.py` — file-level import loops (madge `--circular` equivalent), even inside one module |
 | `enforce_cannot_depend_on` | `api` imports `billing` but `billing` is in `cannot_depend_on` (supports globs: `"tests_*"`) |
 | `can_only_depend_on` | `api` declares an allowlist; importing anything outside it fails (safe by default — new modules aren't silently allowed) |
 | `enforce_layers` | `db` (infrastructure) imports from `api` (presentation) |
@@ -178,6 +184,7 @@ cannot_depend_on = ["billing", "tests_*"]   # blacklist (exact names or globs)
 
 [rules]
 no_cycles = true
+no_file_cycles = false                        # file-level import loops (on by default in --auto)
 enforce_cannot_depend_on = true
 no_orphans = false                            # warn on dead modules
 independence = [["billing", "shipping"]]      # mutually-independent module groups

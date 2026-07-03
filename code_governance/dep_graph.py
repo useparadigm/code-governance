@@ -25,7 +25,11 @@ class DepEdge:
 @dataclass
 class DependencyGraph:
     module_edges: dict[str, dict[str, int]] = field(default_factory=lambda: defaultdict(lambda: defaultdict(int)))
+    # Resolved file -> file edges (both sides are scanned source files). Only
+    # populated when rules.no_file_cycles is enabled — building it costs a
+    # second resolution pass.
     file_edges: dict[str, dict[str, int]] = field(default_factory=lambda: defaultdict(lambda: defaultdict(int)))
+    file_edge_details: list[EdgeDetail] = field(default_factory=list)
     module_internal_edges: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     module_external_edges: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     symbols_per_module: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
@@ -95,8 +99,6 @@ def build_dependency_graph(
             if not target_module:
                 continue
 
-            graph.file_edges[ext.file_path][imp.source_module] += 1
-
             if target_module == src_module:
                 graph.module_internal_edges[src_module] += 1
             else:
@@ -113,7 +115,72 @@ def build_dependency_graph(
                     raw_statement=imp.raw_statement,
                 ))
 
+    if config.rules.no_file_cycles:
+        _build_file_edges(graph, extractions, config, patterns, module_files)
+
     return graph
+
+
+def _build_file_edges(
+    graph: DependencyGraph,
+    extractions: list[FileExtractionResult],
+    config: GovernanceConfig,
+    patterns: "LanguagePatterns",
+    module_files: dict[str, str],
+) -> None:
+    """Resolve every import to a concrete source *file* and record file -> file
+    edges. Runs as a separate pass with a file-valued importable map so the
+    per-map prefix-index memoization in the resolvers stays hot for each pass.
+
+    The resolvers can fall back to module names or directory prefixes; anything
+    that is not an actual scanned file is dropped, so the file graph contains
+    only real file -> file relationships (no fabricated edges).
+    """
+    importable_files = _build_importable_file_map(extractions, patterns)
+    all_files = {ext.file_path for ext in extractions}
+
+    for ext in extractions:
+        for imp in ext.imports:
+            # Type-only imports (TYPE_CHECKING blocks, `import type`) are erased
+            # at runtime and cannot cause an import loop. They still count as
+            # module-level coupling, so only the file graph skips them.
+            if imp.type_only:
+                continue
+            target_file = patterns.resolve_import(
+                imp.source_module, ext.file_path, config, importable_files, module_files,
+                imp.imported_name,
+            )
+            if not target_file or target_file == ext.file_path or target_file not in all_files:
+                continue
+            graph.file_edges[ext.file_path][target_file] += 1
+            graph.file_edge_details.append(EdgeDetail(
+                source_file=ext.file_path,
+                source_module=ext.file_path,
+                target_module=target_file,
+                imported_name=imp.imported_name,
+                line=imp.line,
+                raw_statement=imp.raw_statement,
+            ))
+
+
+def _build_importable_file_map(
+    extractions: list[FileExtractionResult],
+    patterns: "LanguagePatterns",
+) -> dict[str, str]:
+    """Importable name -> file path. Sorted iteration + setdefault keeps the
+    mapping deterministic if two files ever share an importable name."""
+    mapping: dict[str, str] = {}
+    for ext in sorted(extractions, key=lambda e: e.file_path):
+        importable = patterns.file_to_importable(ext.file_path)
+        if not importable:
+            continue
+        mapping.setdefault(importable, ext.file_path)
+        # Importing a Python package executes its __init__.py, so the package
+        # name itself must resolve to that file (Python importables are dotted;
+        # this suffix never appears in TS "/"-separated importables).
+        if importable.endswith(".__init__"):
+            mapping.setdefault(importable[: -len(".__init__")], ext.file_path)
+    return mapping
 
 
 def _build_file_to_module_map(

@@ -191,6 +191,7 @@ def config_to_toml(config: GovernanceConfig) -> str:
     lines.append("")
     lines.append("[rules]")
     lines.append(f"no_cycles = {'true' if config.rules.no_cycles else 'false'}")
+    lines.append(f"no_file_cycles = {'true' if config.rules.no_file_cycles else 'false'}")
     lines.append(f"enforce_layers = {'true' if config.rules.enforce_layers else 'false'}")
     lines.append(f"enforce_cannot_depend_on = {'true' if config.rules.enforce_cannot_depend_on else 'false'}")
     lines.append(f"transitive = {'true' if config.rules.transitive else 'false'}")
@@ -444,6 +445,7 @@ def run_auto_scan(source_root: str | Path, max_depth: int = 1) -> GovernanceRepo
         modules=modules,
         rules=RulesConfig(
             no_cycles=True,
+            no_file_cycles=True,
             enforce_layers=False,
             enforce_cannot_depend_on=True,
             exclude_test_files=True,

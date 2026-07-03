@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **File-level cycle detection (`no_file_cycles`).** New rule that detects
+  circular imports between individual files — the madge `--circular` equivalent.
+  Module-level cycle detection is structurally blind to cycles inside a single
+  module (and `--depth` only tunes directory granularity); this rule closes that
+  gap. Resolves imports to concrete files (including Python package `__init__.py`
+  and TypeScript `index.*` barrels), reports one violation per strongly connected
+  component with a representative shortest cycle and per-hop evidence, and is
+  fully deterministic. Opt-in via `[rules] no_file_cycles = true` in
+  governance.toml (existing setups unaffected); enabled by default in `--auto`
+  scans. The file graph is only built when the rule is on — no extra resolution
+  cost otherwise.
+
 ## 0.5.0
 
 ### Accuracy (fewer false negatives / false positives)
