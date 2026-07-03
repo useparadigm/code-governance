@@ -163,12 +163,19 @@ def _build_file_edges(
             ))
 
 
+# Marks a package/directory prefix that has no entry file (__init__.py /
+# index.*). Importing it executes nothing, so resolution must yield no edge;
+# the sentinel is never a scanned file, so _build_file_edges drops it.
+_NO_ENTRY_FILE = "\0"
+
+
 def _build_importable_file_map(
     extractions: list[FileExtractionResult],
     patterns: "LanguagePatterns",
 ) -> dict[str, str]:
     """Importable name -> file path. Sorted iteration + setdefault keeps the
     mapping deterministic if two files ever share an importable name."""
+    sep = "." if patterns.language == "python" else "/"
     mapping: dict[str, str] = {}
     for ext in sorted(extractions, key=lambda e: e.file_path):
         importable = patterns.file_to_importable(ext.file_path)
@@ -180,6 +187,26 @@ def _build_importable_file_map(
         # this suffix never appears in TS "/"-separated importables).
         if importable.endswith(".__init__"):
             mapping.setdefault(importable[: -len(".__init__")], ext.file_path)
+
+    # Close the map over every package/directory prefix. Without this, a bare
+    # `import pkg` on a namespace package (or a directory import without an
+    # index file) would fall through to the resolvers' prefix-index fallback
+    # and fabricate an edge to an arbitrary child file. An exact sentinel hit
+    # short-circuits that fallback; directories WITH an entry file resolve to
+    # it (Python __init__ registered above, TS index.* here).
+    prefixes: set[str] = set()
+    for key in list(mapping):
+        parts = key.split(sep)
+        for k in range(1, len(parts)):
+            prefixes.add(sep.join(parts[:k]))
+    for prefix in prefixes:
+        if prefix in mapping:
+            continue
+        index_key = f"{prefix}/index" if sep == "/" else None
+        if index_key and mapping.get(index_key):
+            mapping[prefix] = mapping[index_key]
+        else:
+            mapping[prefix] = _NO_ENTRY_FILE
     return mapping
 
 

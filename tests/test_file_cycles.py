@@ -281,6 +281,57 @@ def test_violation_files_lists_full_scc(tmp_path):
     assert "pkg/c.py" not in evidence_files  # off the representative cycle
 
 
+def test_namespace_package_import_creates_no_edge(tmp_path):
+    # `import pkg` on a namespace package (no __init__.py) executes nothing at
+    # runtime — it must not resolve to an arbitrary child file and fabricate a
+    # cycle. Here pkg/a.py imports pkg.b (real edge) and pkg/b.py imports the
+    # bare namespace package back: no runtime loop exists.
+    _write(tmp_path, {
+        "pkg/a.py": "from pkg.b import B\nclass A: pass\n",
+        "pkg/b.py": "import pkg\nclass B: pass\n",
+    })
+    config = _py_config()
+    graph = _scan(tmp_path, config)
+    assert check_no_file_cycles(graph, config) == []
+
+
+def test_typescript_per_specifier_type_imports_do_not_count(tmp_path):
+    # `import { type Foo }` / `export { type Foo }` specifiers are erased at
+    # compile time; a type-only back-reference paired with a runtime import
+    # from the other side is not a runtime cycle.
+    _write(tmp_path, {
+        "src/x.ts": "import { type Y } from './y'\nexport const x = 1\n",
+        "src/y.ts": "import { x } from './x'\nexport type Y = number\n",
+        "src/p.ts": "export { type Q } from './q'\nexport const p = 1\n",
+        "src/q.ts": "import { p } from './p'\nexport type Q = string\n",
+    })
+    config = GovernanceConfig(
+        root=".",
+        language=Language.TYPESCRIPT,
+        modules=[ModuleConfig(name="src", path="src/")],
+        rules=RulesConfig(no_file_cycles=True),
+    )
+    graph = _scan(tmp_path, config)
+    assert check_no_file_cycles(graph, config) == []
+
+
+def test_typescript_mixed_specifiers_keep_runtime_edge(tmp_path):
+    # `import { type Y, y }` still carries a runtime specifier — edge stays.
+    _write(tmp_path, {
+        "src/x.ts": "import { type Y, y } from './y'\nexport const x = y\n",
+        "src/y.ts": "import { x } from './x'\nexport const y = 2\nexport type Y = number\n",
+    })
+    config = GovernanceConfig(
+        root=".",
+        language=Language.TYPESCRIPT,
+        modules=[ModuleConfig(name="src", path="src/")],
+        rules=RulesConfig(no_file_cycles=True),
+    )
+    graph = _scan(tmp_path, config)
+    violations = check_no_file_cycles(graph, config)
+    assert len(violations) == 1
+
+
 def test_auto_scan_reports_file_cycles(tmp_path):
     _write(tmp_path, {
         "app/a.py": "from app.b import B\nclass A: pass\n",
