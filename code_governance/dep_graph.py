@@ -136,7 +136,7 @@ def _build_file_edges(
     that is not an actual scanned file is dropped, so the file graph contains
     only real file -> file relationships (no fabricated edges).
     """
-    importable_files = _build_importable_file_map(extractions, patterns)
+    importable_files = _build_importable_file_map(extractions, config, patterns)
     all_files = {ext.file_path for ext in extractions}
 
     for ext in extractions:
@@ -171,6 +171,7 @@ _NO_ENTRY_FILE = "\0"
 
 def _build_importable_file_map(
     extractions: list[FileExtractionResult],
+    config: GovernanceConfig,
     patterns: "LanguagePatterns",
 ) -> dict[str, str]:
     """Importable name -> file path. Sorted iteration + setdefault keeps the
@@ -187,6 +188,19 @@ def _build_importable_file_map(
         # this suffix never appears in TS "/"-separated importables).
         if importable.endswith(".__init__"):
             mapping.setdefault(importable[: -len(".__init__")], ext.file_path)
+
+    # The source root itself may be a package (`--auto` on a package dir sets
+    # package_prefix to its name): `import <prefix>` executes the root
+    # __init__.py, and `<prefix>.x` names root-relative importable `x`. Alias
+    # every entry under the prefix — registering only the bare prefix would
+    # make it shadow deeper candidates via ancestor matching (`<prefix>.a.Sym`
+    # would resolve to the root __init__ instead of `a`).
+    if sep == "." and config.package_prefix:
+        prefix = config.package_prefix
+        for key, val in list(mapping.items()):
+            mapping.setdefault(f"{prefix}.{key}", val)
+        if "__init__" in mapping:
+            mapping.setdefault(prefix, mapping["__init__"])
 
     # Close the map over every package/directory prefix. Without this, a bare
     # `import pkg` on a namespace package (or a directory import without an

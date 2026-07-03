@@ -345,6 +345,21 @@ def test_auto_scan_reports_file_cycles(tmp_path):
     assert not report.passed
 
 
+def test_root_package_init_cycle_detected(tmp_path):
+    # --auto pointed at a package directory itself: `import myapp` from a
+    # child module executes the root __init__.py, which imports back — cycle.
+    root = tmp_path / "myapp"
+    _write(root, {
+        "__init__.py": "from myapp.a import A\n",
+        "a.py": "import myapp\nclass A: pass\n",
+    })
+    report = run_auto_scan(root)
+    file_cycles = [v for v in report.violations if v.rule == RuleKind.NO_FILE_CYCLES]
+    assert len(file_cycles) == 1
+    assert "__init__.py" in file_cycles[0].detail
+    assert "a.py" in file_cycles[0].detail
+
+
 def test_config_toml_roundtrip_includes_no_file_cycles(tmp_path):
     config = _py_config()
     toml_str = config_to_toml(config)
