@@ -94,6 +94,12 @@ def run_governance_diff(config_path: str | Path, git_ref: str = "HEAD", *, confi
         if v.module in changed_modules:
             filtered.append(v)
             continue
+        # File-scoped violations (e.g. file cycles) list every involved file in
+        # v.files; a changed file anywhere in the SCC keeps the violation, even
+        # off the representative cycle that evidence samples.
+        if v.files and changed_files & set(v.files):
+            filtered.append(v)
+            continue
         if v.evidence:
             relevant = [e for e in v.evidence if e.get("source_file") in changed_files]
             if relevant:
@@ -191,6 +197,7 @@ def config_to_toml(config: GovernanceConfig) -> str:
     lines.append("")
     lines.append("[rules]")
     lines.append(f"no_cycles = {'true' if config.rules.no_cycles else 'false'}")
+    lines.append(f"no_file_cycles = {'true' if config.rules.no_file_cycles else 'false'}")
     lines.append(f"enforce_layers = {'true' if config.rules.enforce_layers else 'false'}")
     lines.append(f"enforce_cannot_depend_on = {'true' if config.rules.enforce_cannot_depend_on else 'false'}")
     lines.append(f"transitive = {'true' if config.rules.transitive else 'false'}")
@@ -444,6 +451,7 @@ def run_auto_scan(source_root: str | Path, max_depth: int = 1) -> GovernanceRepo
         modules=modules,
         rules=RulesConfig(
             no_cycles=True,
+            no_file_cycles=True,
             enforce_layers=False,
             enforce_cannot_depend_on=True,
             exclude_test_files=True,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re as _re
 import sys
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Optional
@@ -155,18 +156,24 @@ class PythonPatterns:
 
     def _extract_imports(self, root: SgNode) -> list[ImportInfo]:
         results: list[ImportInfo] = []
+        type_ranges = _type_checking_ranges(root)
+
+        def _is_type_only(line: int) -> bool:
+            return any(start <= line <= end for start, end in type_ranges)
 
         for node in root.find_all(kind="import_statement"):
             line = node.range().start.line + 1
             raw = node.text()
+            type_only = _is_type_only(line)
             for child in node.children():
                 if child.kind() in ("dotted_name", "aliased_import"):
                     mod = child.text().split(" as ")[0]
-                    results.append(ImportInfo(source_module=mod, line=line, raw_statement=raw))
+                    results.append(ImportInfo(source_module=mod, line=line, raw_statement=raw, type_only=type_only))
 
         for node in root.find_all(kind="import_from_statement"):
             line = node.range().start.line + 1
             raw = node.text()
+            type_only = _is_type_only(line)
             mod_node = None
             names: list[str] = []
             for child in node.children():
@@ -181,9 +188,9 @@ class PythonPatterns:
             mod = mod_node.text() if mod_node else ""
             if names:
                 for name in names:
-                    results.append(ImportInfo(source_module=mod, imported_name=name, line=line, raw_statement=raw))
+                    results.append(ImportInfo(source_module=mod, imported_name=name, line=line, raw_statement=raw, type_only=type_only))
             else:
-                results.append(ImportInfo(source_module=mod, line=line, raw_statement=raw))
+                results.append(ImportInfo(source_module=mod, line=line, raw_statement=raw, type_only=type_only))
 
         return results
 
@@ -214,6 +221,29 @@ class PythonPatterns:
             if name:
                 symbols.append(name.text())
         return symbols
+
+
+def _type_checking_ranges(root: SgNode) -> list[tuple[int, int]]:
+    """1-based line ranges of `if TYPE_CHECKING:` bodies. Imports inside them
+    never execute at runtime. Matches the bare name and any dotted suffix
+    (`typing.TYPE_CHECKING`, `t.TYPE_CHECKING`)."""
+    ranges: list[tuple[int, int]] = []
+    for node in root.find_all(kind="if_statement"):
+        condition = node.field("condition")
+        if condition is None:
+            continue
+        cond_text = condition.text().strip()
+        # Exact dotted name only (TYPE_CHECKING, typing.TYPE_CHECKING, ...).
+        # Compound or negated conditions (`not typing.TYPE_CHECKING`,
+        # `DEBUG and TYPE_CHECKING`) can execute at runtime — don't match.
+        if _re.fullmatch(r"(?:\w+\.)*TYPE_CHECKING", cond_text):
+            # Only the `if` body is type-only; an `else:` branch still runs at
+            # runtime (the fallback-import pattern), so use the consequence
+            # block's range, not the whole statement.
+            body = node.field("consequence")
+            rng = (body or node).range()
+            ranges.append((rng.start.line + 1, rng.end.line + 1))
+    return ranges
 
 
 def _resolve_relative_import(import_source: str, importing_file: str) -> Optional[str]:

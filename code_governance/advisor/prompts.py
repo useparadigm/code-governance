@@ -14,6 +14,7 @@ Higher layers may depend on lower layers, not vice versa.
 - **Rules**:
   - `enforce_cannot_depend_on`: Modules cannot import from modules listed in their cannot_depend_on.
   - `no_cycles`: No circular dependency chains between modules.
+  - `no_file_cycles`: No circular imports between individual files (runtime import-loop hazard).
   - `enforce_layers`: Lower layers cannot import from higher layers.
   - `max_public_surface`: Warns when too many symbols are used externally.
   - `min_cohesion`: Warns when a module imports more externally than internally.
