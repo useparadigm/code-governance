@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import sys
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Optional
 
@@ -14,24 +16,135 @@ if TYPE_CHECKING:
 
 _EXTENSIONS = (".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs")
 
+_MAX_WORKSPACE_LOOKUP_DEPTH = 3
+
+
+def discover_workspace_packages(root: Path) -> list[tuple[str, str, dict]]:
+    """(package name, root-relative dir, exports map) for every workspace package
+    under `root`, longest name first so `@x/a-b` wins over `@x/a`.
+
+    Reads the `workspaces` field of the nearest enclosing package.json. Only packages
+    that live under `root` are returned — anything outside it has no importables to
+    match anyway."""
+    manifest = _find_workspace_manifest(root)
+    if manifest is None:
+        return []
+    manifest_dir, patterns = manifest
+
+    found: list[tuple[str, str, dict]] = []
+    seen: set[Path] = set()
+    for pattern in patterns:
+        try:
+            matches = sorted(manifest_dir.glob(f"{pattern.rstrip('/')}/package.json"))
+        except (ValueError, OSError):
+            continue
+        for pkg_json in matches:
+            pkg_dir = pkg_json.parent.resolve()
+            if pkg_dir in seen:
+                continue
+            seen.add(pkg_dir)
+            try:
+                rel_dir = pkg_dir.relative_to(root)
+            except ValueError:
+                continue  # package lives outside the scanned source root
+            try:
+                data = json.loads(pkg_json.read_text(encoding="utf-8", errors="replace"))
+            except (json.JSONDecodeError, OSError) as e:
+                print(f"Warning: failed to parse {pkg_json}: {e}", file=sys.stderr)
+                continue
+            name = data.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            found.append((name, rel_dir.as_posix(), _exports_map(data)))
+    found.sort(key=lambda item: (-len(item[0]), item[0]))
+    return found
+
+
+def _find_workspace_manifest(root: Path) -> Optional[tuple[Path, list[str]]]:
+    for candidate in [root, *list(root.parents)[:_MAX_WORKSPACE_LOOKUP_DEPTH]]:
+        pkg_json = candidate / "package.json"
+        if not pkg_json.exists():
+            continue
+        try:
+            data = json.loads(pkg_json.read_text(encoding="utf-8", errors="replace"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        workspaces = data.get("workspaces")
+        if isinstance(workspaces, dict):
+            workspaces = workspaces.get("packages")
+        if isinstance(workspaces, list):
+            patterns = [w for w in workspaces if isinstance(w, str)]
+            if patterns:
+                return candidate, patterns
+    return None
+
+
+def _exports_map(package_json: dict) -> dict[str, str]:
+    """Flatten package.json `exports` / `main` into subpath -> file target."""
+    out: dict[str, str] = {}
+    exports = package_json.get("exports")
+    if isinstance(exports, str):
+        out["."] = exports
+    elif isinstance(exports, dict):
+        for subpath, target in exports.items():
+            if not isinstance(subpath, str) or not subpath.startswith("."):
+                continue
+            resolved = _first_string_target(target)
+            if resolved:
+                out[subpath] = resolved
+    main = package_json.get("main")
+    if isinstance(main, str) and "." not in out:
+        out["."] = main
+    return out
+
+
+def _first_string_target(target) -> Optional[str]:
+    """Conditional exports nest by condition (`import`/`require`/`default`); any of
+    them points at the same module for graph purposes, so take the first."""
+    if isinstance(target, str):
+        return target
+    if isinstance(target, dict):
+        for value in target.values():
+            resolved = _first_string_target(value)
+            if resolved:
+                return resolved
+    if isinstance(target, list):
+        for value in target:
+            resolved = _first_string_target(value)
+            if resolved:
+                return resolved
+    return None
+
 
 class TypeScriptPatterns:
     language = "tsx"
     extensions = _EXTENSIONS
     test_file_patterns: list[tuple[str, str]] = [
-        ("", ext) for ext in (
-            ".test.ts", ".test.tsx", ".test.js", ".test.jsx",
-            ".spec.ts", ".spec.tsx", ".spec.js", ".spec.jsx",
-        )
+        ("", f".{kind}{ext}") for kind in ("test", "spec") for ext in _EXTENSIONS
     ]
 
     def __init__(self) -> None:
         self._tsconfig: Optional[TsConfig] = None
         self._repo_root: Optional[Path] = None
+        self._workspace_packages: list[tuple[str, str, dict]] = []
 
     def initialize(self, repo_root: Path, config: "GovernanceConfig") -> None:
         self._repo_root = Path(repo_root).resolve()
-        self._tsconfig = load_tsconfig(self._repo_root, ["tsconfig.json", "tsconfig.base.json"])
+        self._tsconfig = self._find_tsconfig(self._repo_root)
+        self._workspace_packages = discover_workspace_packages(self._repo_root)
+
+    @staticmethod
+    def _find_tsconfig(root: Path) -> Optional[TsConfig]:
+        """Source root first, then ancestors — monorepo packages routinely keep their
+        aliases in a tsconfig one or two levels up (`tsconfig.base.json` at the repo
+        root). Targets that resolve outside the source root simply never match an
+        importable, so an unrelated ancestor config cannot invent edges."""
+        names = ["tsconfig.json", "tsconfig.base.json"]
+        for candidate in [root, *list(root.parents)[:3]]:
+            found = load_tsconfig(candidate, names)
+            if found is not None:
+                return found
+        return None
 
     def extract(self, root: SgNode, file_path: str) -> FileExtractionResult:
         imports = self._extract_imports(root)
@@ -72,8 +185,11 @@ class TypeScriptPatterns:
         out: list[str] = []
 
         alias_targets = self._apply_alias(import_source)
+        workspace_targets = self._apply_workspace(import_source)
         if alias_targets:
             out.extend(alias_targets)
+        elif workspace_targets:
+            out.extend(workspace_targets)
         elif import_source.startswith("."):
             rel = self._resolve_relative(import_source, importing_file)
             if rel:
@@ -109,6 +225,36 @@ class TypeScriptPatterns:
         # (@scope/pkg) and not a single-word bare package (`react`, `kea`).
         if (first.isalnum() or first == "_") and "/" in import_source:
             return [import_source]
+        return []
+
+    def _apply_workspace(self, import_source: str) -> list[str]:
+        """`@scope/pkg/sub` -> the workspace package's source file.
+
+        npm/pnpm/yarn workspace packages look like third-party specifiers, so without
+        this every cross-package edge in a monorepo is silently dropped."""
+        if not self._workspace_packages or import_source.startswith("."):
+            return []
+        for name, pkg_dir, exports in self._workspace_packages:
+            if import_source != name and not import_source.startswith(name + "/"):
+                continue
+            rest = import_source[len(name):].lstrip("/")
+            subpath = "." if not rest else f"./{rest}"
+            candidates: list[str] = []
+            target = exports.get(subpath)
+            if target is None:
+                for pattern, value in exports.items():
+                    if "*" not in pattern:
+                        continue
+                    prefix, _, suffix = pattern.partition("*")
+                    if subpath.startswith(prefix) and subpath.endswith(suffix):
+                        matched = subpath[len(prefix): len(subpath) - len(suffix)] if suffix else subpath[len(prefix):]
+                        candidates.append(value.replace("*", matched))
+            else:
+                candidates.append(target)
+            # exports maps are optional — fall back to the conventional layouts
+            candidates.append(f"src/{rest}" if rest else "src")
+            candidates.append(rest or "index")
+            return [f"{pkg_dir}/{c.lstrip('./')}".strip("/") for c in candidates]
         return []
 
     def _apply_alias(self, import_source: str) -> list[str]:
@@ -244,6 +390,27 @@ class TypeScriptPatterns:
             raw = node.text()
             results.append(ImportInfo(source_module=source, line=line, raw_statement=raw))
 
+        # `await import("./heavy")` — code-split call sites are real runtime edges,
+        # and they are exactly the ones a static-only pass reports as dead code.
+        for node in root.find_all(kind="call_expression"):
+            fn = node.field("function")
+            if fn is None or fn.text() != "import":
+                continue
+            args = node.field("arguments")
+            if args is None:
+                continue
+            source = _first_string_child(args)
+            if source is None:
+                continue
+            results.append(ImportInfo(
+                source_module=source,
+                line=node.range().start.line + 1,
+                raw_statement=node.text(),
+                # `typeof import("x")` / `const x: import("x").T` parse as calls too,
+                # but they are erased at compile time like `import type`.
+                type_only=_in_type_position(node),
+            ))
+
         return results
 
     def _extract_classes(self, root: SgNode) -> list[ClassInfo]:
@@ -278,6 +445,24 @@ class TypeScriptPatterns:
                     if name_node and name_node.kind() == "identifier":
                         symbols.append(name_node.text())
         return symbols
+
+
+_TYPE_CONTEXT_KINDS = {
+    "type_query", "type_annotation", "type_alias_declaration", "type_arguments",
+    "generic_type", "interface_declaration", "opting_type_annotation",
+    "omitting_type_annotation", "type_predicate", "satisfies_expression",
+}
+
+
+def _in_type_position(node: SgNode, max_depth: int = 6) -> bool:
+    parent = node.parent()
+    depth = 0
+    while parent is not None and depth < max_depth:
+        if parent.kind() in _TYPE_CONTEXT_KINDS:
+            return True
+        parent = parent.parent()
+        depth += 1
+    return False
 
 
 def _is_type_only_statement(node: SgNode, keyword: str) -> bool:

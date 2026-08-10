@@ -8,3 +8,4 @@ build/
 *.toml.bak
 .pytest_cache/
 .governance-baseline.json
+.DS_Store
