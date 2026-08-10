@@ -31,15 +31,30 @@ body { font-family: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace
 .crumb:hover { background: var(--bg-hover); }
 .crumb.active { background: var(--bg-selected); font-weight: 600; }
 .sep { color: var(--text-muted); }
-.stat { display: flex; gap: 5px; }
+.stat { display: flex; gap: 5px; align-items: center; }
+.stat-icon { display: inline-flex; color: var(--text-muted); }
 .stat-label { color: var(--text-muted); }
 .stat-value { font-weight: 600; }
 .stat-value.bad { color: var(--red); }
+/* lines of code lives with the legend, bottom left — the header carries structure counts */
+.legend .stat.loc-total { display: inline-flex; margin-right: 12px; }
 .spacer { flex: 1; }
 input[type=search] { background: var(--bg); color: var(--text); border: 1px solid var(--border);
                      border-radius: 4px; padding: 3px 8px; font-family: inherit; font-size: 12px; width: 180px; }
-.toggle { cursor: pointer; user-select: none; color: var(--text-muted); padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px; }
+.search-wrap { display: flex; align-items: center; gap: 5px; }
+.toggle { cursor: pointer; user-select: none; color: var(--text-muted); padding: 2px 6px; border: 1px solid var(--border);
+          border-radius: 4px; display: inline-flex; align-items: center; gap: 5px; }
 .toggle.on { color: var(--text); background: var(--bg-selected); }
+
+/* ---- icons ----
+   One 16×16 stroke set, drawn in currentColor so a badge on red and the same
+   badge in the legend are the same drawing at two colours. `.ic` sizes itself to
+   the surrounding text; `.ic-c` is placed on the canvas, where width/height come
+   from the element's own attributes and CSS must not override them. */
+.ic, .ic-c { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.ic { width: 1.05em; height: 1.05em; display: inline-block; vertical-align: -.16em; flex: none; }
+.ic-meta { color: var(--text-muted); }
+.ic-badge { color: #fff; }
 .main { flex: 1; display: flex; min-height: 0; }
 .canvas { flex: 1; overflow: auto; position: relative; }
 .side { width: 380px; border-left: 1px solid var(--border); background: var(--bg-panel); overflow-y: auto; padding: 12px; }
@@ -60,8 +75,12 @@ input[type=search] { background: var(--bg); color: var(--text); border: 1px soli
 .row.unused-sym .num { color: var(--red); }
 .sites { padding: 2px 0 6px 14px; font-size: 11px; color: var(--text-muted); }
 .sites div { padding: 1px 0; word-break: break-all; }
-.pill { display: inline-block; padding: 0 5px; border-radius: 8px; background: var(--badge-bg); font-size: 11px; margin-right: 4px; }
+.pill { display: inline-flex; align-items: center; gap: 3px; padding: 0 6px; border-radius: 8px;
+        background: var(--badge-bg); font-size: 11px; margin-right: 4px; vertical-align: -.15em; }
 .pill.red { background: var(--red); color: #fff; }
+.pill.green { background: var(--green); color: #fff; }
+.pill.amber { background: var(--amber); color: #fff; }
+.pill.blue { background: var(--blue); color: #fff; }
 .empty { color: var(--text-muted); padding: 20px; }
 svg { display: block; }
 .node rect { fill: var(--bg-panel); stroke: var(--border); stroke-width: 1.2; rx: 6; cursor: pointer; }
@@ -75,9 +94,13 @@ svg { display: block; }
 .node .loc-bar { fill: var(--blue); opacity: .5; }
 .node.sel .loc-bar { opacity: .9; }
 .node .badge { opacity: .85; }
-.node .badge-t { font-size: 9px; fill: #fff; text-anchor: middle; font-weight: 600; }
-.b-red { fill: var(--red); } .b-amber { fill: var(--amber); }
-.b-green { fill: var(--green); } .b-blue { fill: var(--blue); } .b-muted { fill: var(--text-muted); }
+.node .badge-t { font-size: 10px; fill: #fff; font-weight: 600; }
+/* `.node rect` sets a panel fill, so a bare `.b-red` never won — badges rendered
+   white-on-white. Match the same specificity to colour them. */
+.node rect.b-red { fill: var(--red); } .node rect.b-amber { fill: var(--amber); }
+.node rect.b-green { fill: var(--green); } .node rect.b-blue { fill: var(--blue); }
+.node rect.b-muted { fill: var(--text-muted); }
+.node rect.badge { stroke: none; }
 
 /* one colour per kind, used by the glyph in the graph and in every list */
 .k-folder .glyph, .g-folder { fill: var(--blue); color: var(--blue); }
@@ -141,7 +164,8 @@ table.matrix td.diag { background: var(--bg-hover); }
 .split-handle:hover, .split-handle.drag { opacity: 1; background: var(--blue); }
 .code-head { display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--bg-panel); }
 .code-head .path { font-weight: 600; overflow-wrap: anywhere; }
-.code-head .btn { cursor: pointer; padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-muted); }
+.code-head .btn { cursor: pointer; padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px;
+                  color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px; }
 .code-head .btn:hover { background: var(--bg-hover); color: var(--text); }
 .code { flex: 1; overflow: auto; font-size: 12px; line-height: 1.5; padding: 6px 0 40vh; }
 .cl { display: flex; white-space: pre; }
@@ -164,23 +188,22 @@ table.matrix td.diag { background: var(--bg-hover); }
 <div class="header">
   <div class="crumbs" id="crumbs"></div>
   <div class="spacer"></div>
-  <div class="stat"><span class="stat-label">nodes</span><span class="stat-value" id="s-nodes">0</span></div>
-  <div class="stat"><span class="stat-label">files</span><span class="stat-value" id="s-files">0</span></div>
-  <div class="stat"><span class="stat-label">loc</span><span class="stat-value" id="s-loc">0</span></div>
-  <div class="stat"><span class="stat-label">edges</span><span class="stat-value" id="s-edges">0</span></div>
-  <div class="stat"><span class="stat-label">cycles</span><span class="stat-value" id="s-cycles">0</span></div>
-  <span class="toggle on" id="t-view">graph</span>
-  <span class="toggle on" id="t-ext">externals</span>
-  <span class="toggle" id="t-type">hide type-only</span>
-  <input type="search" id="search" placeholder="filter nodes…">
+  <div class="stat" title="folders at this level"><span class="stat-icon" data-icon="folder"></span><span class="stat-label">folders</span><span class="stat-value" id="s-folders">0</span></div>
+  <div class="stat" title="files under this level"><span class="stat-icon" data-icon="file"></span><span class="stat-label">files</span><span class="stat-value" id="s-files">0</span></div>
+  <div class="stat" title="import sites between nodes at this level"><span class="stat-icon" data-icon="link"></span><span class="stat-label">edges</span><span class="stat-value" id="s-edges">0</span></div>
+  <div class="stat" title="dependency cycles at this level"><span class="stat-icon" data-icon="cycle"></span><span class="stat-label">cycles</span><span class="stat-value" id="s-cycles">0</span></div>
+  <span class="toggle on" id="t-view"><span data-icon="chart"></span>graph</span>
+  <span class="toggle on" id="t-ext"><span data-icon="globe"></span>externals</span>
+  <span class="toggle" id="t-type"><span data-icon="tag"></span>hide type-only</span>
+  <span class="search-wrap"><span class="stat-icon" data-icon="search"></span><input type="search" id="search" placeholder="filter nodes…"></span>
 </div>
 <div class="main">
   <div class="canvas" id="canvas"></div>
   <div class="split-handle" id="handle" style="display:none"></div>
   <div class="code-pane" id="codepane" style="display:none">
     <div class="code-head">
-      <span class="btn" onclick="codeBack()">←</span>
-      <span class="btn" onclick="closeCode()">graph</span>
+      <span class="btn" onclick="codeBack()">← back</span>
+      <span class="btn" onclick="closeCode()"><span data-icon="chart"></span> graph</span>
       <span class="path" id="code-path"></span>
     </div>
     <div class="code" id="code"></div>
@@ -188,16 +211,71 @@ table.matrix td.diag { background: var(--bg-hover); }
   <div class="side" id="side"></div>
 </div>
 <div class="legend">
+  <span class="stat loc-total" title="lines of code at this level"><span class="stat-icon" data-icon="lines"></span><span class="stat-label">lines of code</span><span class="stat-value" id="s-loc">0</span></span>
   <span id="glyph-legend"></span>
-  <span class="pill red">cyc</span> in a cycle
-  <span class="pill">hub</span> 40+ importers
-  <span class="pill">leaf</span> depends on nothing
-  <span class="pill">entry</span> entry point — nothing imports it by design
-  <span class="pill red">uncalled</span> nothing imports it and it is not an entrypoint
+  <span id="badge-legend"></span>
   · <span style="color:var(--ext)">dashed violet = outside this folder; select a node to trace its outside edges, click a ghost to go there</span> · bar under a node = lines of code
 </div>
 <div class="legend" id="legend">click any node = details in the side panel · click file = open source · double-click folder = drill in · breadcrumb = drill out · red dashed edge = cycle back-edge (type-only imports excluded)</div>
 <script>
+/* ---------- icons ----------
+   Drawn once, at 16×16, in strokes only. The same path serves the HTML panels and
+   the SVG canvas, so a badge in the graph and its entry in the legend can never
+   drift apart. */
+const ICONS = {
+  folder: '<path d="M2.4 4.4a1.4 1.4 0 0 1 1.4-1.4h2.7l1.5 2h4.4a1.4 1.4 0 0 1 1.4 1.4v5.2a1.4 1.4 0 0 1-1.4 1.4H3.8a1.4 1.4 0 0 1-1.4-1.4z"/>',
+  file: '<path d="M9.2 2.5H4.6a1.4 1.4 0 0 0-1.4 1.4v8.2a1.4 1.4 0 0 0 1.4 1.4h6.8a1.4 1.4 0 0 0 1.4-1.4V5.9z"/><path d="M9.2 2.5v3.4h3.6"/>',
+  lines: '<path d="M3 4.2h10M3 8h7M3 11.8h9"/>',
+  sym: '<path d="M6.6 2.8c-1.7 0-1.7 1.9-1.7 3S4.5 7.4 3.2 7.4c1.3 0 1.7.5 1.7 1.6s0 3 1.7 3M9.4 2.8c1.7 0 1.7 1.9 1.7 3s.4 1.6 1.7 1.6c-1.3 0-1.7.5-1.7 1.6s0 3-1.7 3"/>',
+  link: '<path d="M6.5 9.5 9.5 6.5M6.1 5.3 7.2 4.2a2.4 2.4 0 0 1 3.4 3.4L9.5 8.7M9.9 10.7l-1.1 1.1a2.4 2.4 0 0 1-3.4-3.4L6.5 7.3"/>',
+  /* Two icons carry the most meaning at the smallest size, so they are drawn on a
+     24 grid where the curves have room. `sw` keeps their stroke weight matched to
+     the 16-grid set once scaled. */
+  cycle: { vb: "0 0 24 24", sw: 2.2, d: '<path d="M3 12a9 9 0 0 1 9-9 9.7 9.7 0 0 1 6.7 2.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.7 9.7 0 0 1-6.7-2.7L3 16"/><path d="M8 16H3v5"/>' },
+  leaf: { vb: "0 0 24 24", sw: 2.2, d: '<path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.5 19 2c1 2 2 4.2 2 8 0 5.5-4.8 10-10 10z"/><path d="M2 21c0-3 1.9-5.4 3.1-7.1C6.5 12.2 8 10 8 8"/>' },
+  hub: '<circle cx="8" cy="8" r="1.8"/><path d="M8 6.2V2.6M8 9.8v3.6M6.2 8H2.6M9.8 8h3.6"/>',
+  entry: '<path d="M9.4 2.9h2.3a1.4 1.4 0 0 1 1.4 1.4v7.4a1.4 1.4 0 0 1-1.4 1.4H9.4"/><path d="M2.8 8h6.3M7 6l2 2-2 2"/>',
+  ban: '<circle cx="8" cy="8" r="5.3"/><path d="m4.2 4.2 7.6 7.6"/>',
+  check: '<path d="m3.5 8.4 3.1 3.1 6-6.9"/>',
+  in: '<path d="M4.3 4.3 11.7 11.7M11.7 7.5v4.2H7.5"/>',
+  out: '<path d="M4.3 11.7 11.7 4.3M7.5 4.3h4.2v4.2"/>',
+  globe: '<circle cx="8" cy="8" r="5.3"/><path d="M2.7 8h10.6M8 2.7c1.5 1.6 2.3 3.4 2.3 5.3S9.5 11.7 8 13.3C6.5 11.7 5.7 9.9 5.7 8S6.5 4.3 8 2.7z"/>',
+  chart: '<path d="M3.2 12.6V7.2M7 12.6V3.4M10.8 12.6V8.6"/><path d="M2.2 13.4h11.6"/>',
+  grid: '<rect x="2.7" y="2.7" width="10.6" height="10.6" rx="1.2"/><path d="M2.7 6.2h10.6M2.7 9.8h10.6M6.2 2.7v10.6M9.8 2.7v10.6"/>',
+  blocks: '<rect x="2.7" y="2.7" width="4.5" height="4.5" rx="1"/><rect x="8.8" y="2.7" width="4.5" height="4.5" rx="1"/><rect x="2.7" y="8.8" width="4.5" height="4.5" rx="1"/><rect x="8.8" y="8.8" width="4.5" height="4.5" rx="1"/>',
+  tag: '<path d="M2.7 7.9V3.7a1 1 0 0 1 1-1h4.2l5.4 5.4a1 1 0 0 1 0 1.4l-4.2 4.2a1 1 0 0 1-1.4 0z"/><circle cx="5.6" cy="5.6" r=".9"/>',
+  search: '<circle cx="7.1" cy="7.1" r="4.3"/><path d="m10.4 10.4 3 3"/>',
+  pin: '<path d="M8 2.7a4.2 4.2 0 0 0-4.2 4.2c0 3.1 4.2 6.5 4.2 6.5s4.2-3.4 4.2-6.5A4.2 4.2 0 0 0 8 2.7z"/><circle cx="8" cy="6.8" r="1.5"/>',
+  book: '<path d="M8 4.4C6.6 3.2 4.8 2.9 2.8 3.3v8.4c2-.4 3.8-.1 5.2 1.1 1.4-1.2 3.2-1.5 5.2-1.1V3.3c-2-.4-3.8-.1-5.2 1.1z"/><path d="M8 4.4v8.4"/>',
+  export: '<path d="M8 10V2.9M5.6 5.3 8 2.9l2.4 2.4"/><path d="M3.2 10.2v2a1.2 1.2 0 0 0 1.2 1.2h7.2a1.2 1.2 0 0 0 1.2-1.2v-2"/>',
+};
+
+/** Most icons live on a 16 grid; a few declare their own. An inline stroke-width
+ *  is the only way to beat the class rule, so `sw` is written as a style. */
+function iconBody(name) {
+  const i = ICONS[name] || "";
+  return typeof i === "string" ? { vb: "0 0 16 16", sw: null, d: i } : i;
+}
+
+function icon(name, cls) {
+  const { vb, sw, d } = iconBody(name);
+  return `<svg class="ic ${cls || ""}" viewBox="${vb}"${sw ? ` style="stroke-width:${sw}"` : ""} aria-hidden="true">${d}</svg>`;
+}
+
+/** Same drawing, placed on the canvas. Size comes from the attributes here, which
+ *  is why `.ic-c` never sets width/height. */
+function svgIcon(name, x, y, size, cls) {
+  const { vb, sw, d } = iconBody(name);
+  return `<svg class="ic-c ${cls || ""}" x="${x}" y="${y}" width="${size}" height="${size}"
+    viewBox="${vb}"${sw ? ` style="stroke-width:${sw}"` : ""}>${d}</svg>`;
+}
+
+/** The static header and legend mark their icons with `data-icon`; fill them in
+ *  once the set is loaded rather than pasting paths into the markup. */
+function paintIcons(root) {
+  (root || document).querySelectorAll("[data-icon]").forEach(el => { el.innerHTML = icon(el.dataset.icon); });
+}
+
 const DATA = __DATA__;
 const SOURCES = __SOURCES__;
 const FILES = DATA.files;
@@ -432,7 +510,7 @@ function matches(n) { return !query || n.name.toLowerCase().includes(query); }
 
 function render() {
   level = buildLevel();
-  document.getElementById("s-nodes").textContent = level.nodes.length;
+  document.getElementById("s-folders").textContent = level.nodes.filter(n => n.isDir).length;
   document.getElementById("s-files").textContent = level.nodes.reduce((a, n) => a + n.files.length, 0);
   document.getElementById("s-loc").textContent = fmtLoc(level.nodes.reduce((a, n) => a + n.loc, 0));
   document.getElementById("s-edges").textContent = level.links.reduce((a, l) => a + l.count, 0);
@@ -476,20 +554,45 @@ function readHash() {
 }
 window.addEventListener("hashchange", () => { readHash(); selected = null; hideCode(); render(); if (pendingOpen) openFile(pendingOpen[0], pendingOpen[1]); });
 
-const NH = 52, GAPX = 24, GAPY = 70, CHAR_W = 7.25, PAD = 40;
+const NH = 52, GAPX = 24, GAPY = 70, PAD = 40;
 
 /** Boxes are sized to their own label — truncating names is what made the graph
  *  unreadable, so width follows the text instead of the text following the box. */
 function nodeWidth(n) {
-  const label = n.name + (n.isDir ? "/" : "") + badges(n).join(" ");
-  const meta = metaLine(n);
-  const chars = Math.max(label.length, meta.length * 0.84);
-  return Math.max(170, Math.min(440, Math.round(chars * CHAR_W + PAD)));
+  const label = textW(n.name + (n.isDir ? "/" : ""), 12) +
+    badges(n).reduce((a, b) => a + badgeWidth(b) + 4, 0);
+  return Math.max(170, Math.min(440, Math.round(Math.max(label, metaWidth(n)) + PAD)));
 }
 
-function metaLine(n) {
-  return `${n.files.length}f · ${fmtLoc(n.loc)} loc · ${n.symbols}s · in ${n.in} · out ${n.out}` +
-    (n.extOut || n.extIn ? ` · ext ${n.extIn}/${n.extOut}` : "");
+const IC = 11, IC_GAP = 3, META_SEP = 8;
+
+function badgeWidth(b) { return 7 + IC + IC_GAP + textW(BADGE_SHORT[b] || b, 10) + 7; }
+
+/** The meta line is icon/number pairs rather than one string: each count gets the
+ *  picture that names it, and the box can be measured before it is drawn. */
+function metaParts(n) {
+  const p = [{ ic: "file", t: String(n.files.length) },
+             { ic: "lines", t: fmtLoc(n.loc) },
+             { ic: "sym", t: String(n.symbols) },
+             { ic: "in", t: `${n.in} in` },
+             { ic: "out", t: `${n.out} out` }];
+  if (n.extOut || n.extIn) p.push({ ic: "globe", t: `${n.extIn}/${n.extOut}` });
+  return p;
+}
+
+function metaWidth(n) {
+  return metaParts(n).reduce((a, p) => a + IC + IC_GAP + textW(p.t, 10) + META_SEP, 0);
+}
+
+function metaSvg(n, x, baseline) {
+  let cx = x, out = "";
+  for (const p of metaParts(n)) {
+    out += svgIcon(p.ic, cx, baseline - 8.5, IC, "ic-meta");
+    cx += IC + IC_GAP;
+    out += `<text class="meta" x="${cx}" y="${baseline}">${esc(p.t)}</text>`;
+    cx += textW(p.t, 10) + META_SEP;
+  }
+  return out;
 }
 
 /** Directories that hold a framework entry file. Everything beside a `page.tsx` /
@@ -535,8 +638,23 @@ const BADGE_CLASS = {
   cyc: "b-red", hub: "b-amber", leaf: "b-green",
   entry: "b-blue", "entry point": "b-blue", uncalled: "b-red",
 };
+// same word carries the same picture everywhere: graph box, side panel, legend
+const BADGE_ICON = {
+  cyc: "cycle", hub: "hub", leaf: "leaf", entry: "entry", "entry point": "entry", uncalled: "ban",
+};
+const BADGE_PILL = {
+  cyc: "red", hub: "amber", leaf: "green",
+  entry: "blue", "entry point": "blue", uncalled: "red",
+};
 // the graph boxes are tight; the panels spell it out
 const BADGE_SHORT = { "entry point": "entry" };
+
+/** One pill, wherever badges are listed in HTML. */
+function badgePill(b) { return `<span class="pill ${BADGE_PILL[b] || ""}">${icon(BADGE_ICON[b])}${b}</span>`; }
+function badgePills(n) { return badges(n).map(badgePill).join(""); }
+
+/** Boxes are sized from their text, and the font is monospace, so one ratio holds. */
+function textW(s, size) { return s.length * size * 0.62; }
 
 const GH = 40;  // ghost band row height
 
@@ -618,11 +736,12 @@ function renderGraph() {
     const arg = "'" + esc(n.name).replace(/'/g, "\\'") + "'";
     const bar = Math.round((n.w - 2) * Math.sqrt(n.loc / maxLoc));  // sqrt so small files stay visible
     let bx = n.x + n.w - 8;
-    const badgeSvg = badges(n).map(b => BADGE_SHORT[b] || b).reverse().map(b => {
-      const w = b.length * 6.4 + 8;
+    const badgeSvg = badges(n).reverse().map(b => {
+      const w = badgeWidth(b);
       bx -= w + 4;
-      return `<rect class="badge ${BADGE_CLASS[b]}" x="${bx}" y="${n.y + 7}" width="${w}" height="14" rx="7"/>
-              <text class="badge-t" x="${bx + w / 2}" y="${n.y + 17}">${b}</text>`;
+      return `<rect class="badge ${BADGE_CLASS[b]}" x="${bx}" y="${n.y + 6}" width="${w}" height="16" rx="8"/>
+              ${svgIcon(BADGE_ICON[b], bx + 7, n.y + 8.5, IC, "ic-badge")}
+              <text class="badge-t" x="${bx + 7 + IC + IC_GAP}" y="${n.y + 18}">${esc(BADGE_SHORT[b] || b)}</text>`;
     }).join("");
     parts.push(`<g class="${cls}" data-node="${n.idx}" onclick="nodeClick(${arg})" ondblclick="nodeOpen(${arg})"
       onmouseenter="nodeHover(${n.idx}, true)" onmouseleave="nodeHover(${n.idx}, false)">
@@ -630,7 +749,7 @@ function renderGraph() {
       <rect class="loc-bar" x="${n.x + 1}" y="${n.y + NH - 5}" width="${bar}" height="4"/>
       <text class="glyph" x="${n.x + 10}" y="${n.y + 19}">${KINDS[kind].glyph}</text>
       <text class="label" x="${n.x + 26}" y="${n.y + 19}">${esc(n.name)}${n.isDir ? "/" : ""}</text>
-      <text class="meta" x="${n.x + 10}" y="${n.y + 37}">${esc(metaLine(n))}</text>
+      ${metaSvg(n, n.x + 10, n.y + 37)}
       ${badgeSvg}
     </g>`);
   }
@@ -834,14 +953,13 @@ function renderSide() {
       const heading = k === lastKind ? "" :
         `<div class="group-label"><span class="g-${k}">${KINDS[k].glyph}</span> ${KIND_GROUP[k]}</div>`;
       lastKind = k;
-      const tags = badges(n).map(b => `<span class="pill ${b === "cyc" ? "red" : ""}">${b}</span>`).join("");
       return heading + `<div class="row" onclick="nodeClick('${esc(n.name).replace(/'/g, "\\'")}')"
         onmouseenter="nodeHover(${n.idx}, true, true)" onmouseleave="nodeHover(${n.idx}, false)">
-        <span class="name">${esc(n.name)}${n.isDir ? "/" : ""} ${tags}</span>
-        <span class="num">${fmtLoc(n.loc)} loc · in ${n.in} · out ${n.out}</span>
+        <span class="name">${esc(n.name)}${n.isDir ? "/" : ""} ${badgePills(n)}</span>
+        <span class="num">${icon("lines")} ${fmtLoc(n.loc)} ${icon("in")} ${n.in} ${icon("out")} ${n.out}</span>
       </div>`;
     }).join("");
-    el.innerHTML = `<div class="section-label">modules at this level</div>${rows || '<div class="empty">nothing here</div>'}`;
+    el.innerHTML = `<div class="section-label">${icon("blocks")} modules at this level</div>${rows || '<div class="empty">nothing here</div>'}`;
     return;
   }
   const i = level.nodes.findIndex(n => n.name === selected);
@@ -853,23 +971,23 @@ function renderSide() {
   const totalSites = rows.reduce((a, r) => a + r.count, 0);
 
   let html = `<h3><span class="g-${kind}">${KINDS[kind].glyph}</span> ${esc(n.path)}${n.isDir ? "/" : ""}</h3>
-    <div class="sub">${KINDS[kind].label} · ${n.files.length} file${n.files.length === 1 ? "" : "s"} · ${fmtLoc(n.loc)} loc · ${n.symbols} symbols · ${n.self} internal edges</div>
-    <div class="sub">${badges(n).map(b => `<span class="pill ${b === "cyc" ? "red" : ""}">${b}</span>`).join("")}</div>`;
+    <div class="sub">${KINDS[kind].label} · ${icon("file")} ${n.files.length} file${n.files.length === 1 ? "" : "s"} · ${icon("lines")} ${fmtLoc(n.loc)} loc · ${icon("sym")} ${n.symbols} symbols · ${icon("link")} ${n.self} internal edges</div>
+    <div class="sub">${badgePills(n)}</div>`;
 
   if (rows.length) {
-    html += `<div class="banner called">called from ${callers} file${callers === 1 ? "" : "s"} · ${totalSites} import site${totalSites === 1 ? "" : "s"}</div>`;
+    html += `<div class="banner called">${icon("check")} called from ${callers} file${callers === 1 ? "" : "s"} · ${totalSites} import site${totalSites === 1 ? "" : "s"}</div>`;
   } else if (ENTRY_BY_DESIGN(n)) {
-    html += `<div class="banner entry">entry point — nothing imports it, by design</div>`;
+    html += `<div class="banner entry">${icon("entry")} entry point — nothing imports it, by design</div>`;
   } else {
-    html += `<div class="banner uncalled">uncalled — nothing imports it, and it is not an entrypoint</div>`;
+    html += `<div class="banner uncalled">${icon("ban")} uncalled — nothing imports it, and it is not an entrypoint</div>`;
   }
 
-  if (n.isDir) html += `<div class="row" onclick="drill('${esc(n.name).replace(/'/g, "\\'")}')"><span class="name">&#8627; drill into ${esc(n.name)}/</span></div>`;
+  if (n.isDir) html += `<div class="row" onclick="drill('${esc(n.name).replace(/'/g, "\\'")}')"><span class="name">&#8627; ${icon("folder")} drill into ${esc(n.name)}/</span></div>`;
   const fi = nodeFileIdx(n);
-  if (fi >= 0) html += `<div class="row" onclick="openFile(${fi}, 0)"><span class="name">&#8627; open source</span></div>`;
+  if (fi >= 0) html += `<div class="row" onclick="openFile(${fi}, 0)"><span class="name">&#8627; ${icon("book")} open source</span></div>`;
 
   if (rows.length) {
-    html += `<div class="section-label">call sites (${totalSites})</div>`;
+    html += `<div class="section-label">${icon("pin")} call sites (${totalSites})</div>`;
     html += rows.slice(0, 40).map(r => {
       const where = FILES[r.src], cut = where.lastIndexOf("/") + 1, base = where.slice(cut);
       const into = n.files.length > 1 ? ` &rarr; ${esc(FILES[r.dst].split("/").pop())}` : "";
@@ -882,7 +1000,7 @@ function renderSide() {
     if (internal) html += `<div class="sub">${internal} further import sites from inside ${esc(n.name)}/</div>`;
   }
 
-  html += `<div class="section-label">depends on (${out.reduce((a, l) => a + l.count, 0)})</div>`;
+  html += `<div class="section-label">${icon("out")} depends on (${out.reduce((a, l) => a + l.count, 0)})</div>`;
   html += out.map(l => {
     const key = "o" + l.s + ">" + l.t;
     return `<div class="row" onclick="toggleSites('${key}')"><span class="name">${l.back ? '<span class="pill red">&#8634;</span>' : ""}&rarr; ${esc(level.nodes[l.t].name)}</span><span class="num">${l.count}</span></div>` +
@@ -890,7 +1008,7 @@ function renderSide() {
   }).join("") || '<div class="sub">none</div>';
 
   const extOut = [...n.extOutDetail.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
-  if (extOut.length) html += `<div class="section-label">outside this level &mdash; depends on (${n.extOut})</div>` +
+  if (extOut.length) html += `<div class="section-label">${icon("globe")} outside this level &mdash; depends on (${n.extOut})</div>` +
     extOut.map(([k, v]) => `<div class="row"><span class="name">&#8674; ${esc(k)}</span><span class="num">${v}</span></div>`).join("");
   el.innerHTML = html;
 }
@@ -1083,21 +1201,21 @@ function renderCodeSide() {
   const k = fileKind(name);
   let html = `<h3><span class="g-${k}">${KINDS[k].glyph}</span> ${esc(name)}</h3>
     <div class="sub">${esc(FILES[openIdx])}</div>
-    <div class="sub">${KINDS[k].label} · ${LOC[openIdx]} loc · ${SYMS[openIdx]} symbols · ${LINKS[openIdx].length} imports · used by ${IMPORTERS[openIdx].length}</div>`;
+    <div class="sub">${KINDS[k].label} · ${icon("lines")} ${LOC[openIdx]} loc · ${icon("sym")} ${SYMS[openIdx]} symbols · ${icon("out")} ${LINKS[openIdx].length} imports · ${icon("in")} used by ${IMPORTERS[openIdx].length}</div>`;
 
   // same verdict as the graph gives, so it travels with you into the source
   const callerCount = new Set(IMPORTERS[openIdx].map(([, src]) => src)).size;
   if (callerCount) {
-    html += `<div class="banner called">called from ${callerCount} file${callerCount === 1 ? "" : "s"} · ${IMPORTERS[openIdx].length} import site${IMPORTERS[openIdx].length === 1 ? "" : "s"}</div>`;
+    html += `<div class="banner called">${icon("check")} called from ${callerCount} file${callerCount === 1 ? "" : "s"} · ${IMPORTERS[openIdx].length} import site${IMPORTERS[openIdx].length === 1 ? "" : "s"}</div>`;
   } else if (fileEntryByDesign(openIdx)) {
-    html += `<div class="banner entry">entry point — nothing imports it, by design</div>`;
+    html += `<div class="banner entry">${icon("entry")} entry point — nothing imports it, by design</div>`;
   } else {
-    html += `<div class="banner uncalled">uncalled — nothing imports it, and it is not an entrypoint</div>`;
+    html += `<div class="banner uncalled">${icon("ban")} uncalled — nothing imports it, and it is not an entrypoint</div>`;
   }
   const exps = EXPORTS[openIdx] || [];
   if (exps.length) {
     const dead = exps.filter(([name]) => symbolUsers(openIdx, name).length === 0).length;
-    html += `<div class="section-label">exports (${exps.length}${dead ? ` · ${dead} unused` : ""})</div>`;
+    html += `<div class="section-label">${icon("export")} exports (${exps.length}${dead ? ` · ${dead} unused` : ""})</div>`;
     html += exps.map(([name, line, from]) => {
       const users = symbolUsers(openIdx, name);
       const key = "s:" + name;
@@ -1116,9 +1234,9 @@ function renderCodeSide() {
     }).join("");
   }
 
-  html += `<div class="section-label">imports (${imports.length} files)</div>`;
+  html += `<div class="section-label">${icon("out")} imports (${imports.length} files)</div>`;
   html += imports.map(([f, lines]) => relRow(f, lines, "→", 1, symbolsBetween(openIdx, f))).join("") || '<div class="sub">none resolved</div>';
-  html += `<div class="section-label">imported by (${importers.length} files)</div>`;
+  html += `<div class="section-label">${icon("in")} imported by (${importers.length} files)</div>`;
   html += importers.map(([f, lines]) => relRow(f, lines, "←", lines[0], symbolsBetween(f, openIdx))).join("") || '<div class="sub">nothing</div>';
   el.innerHTML = html;
 }
@@ -1129,8 +1247,9 @@ document.addEventListener("keydown", e => {
 
 document.getElementById("t-view").onclick = e => {
   view = view === "graph" ? "matrix" : "graph";
-  e.target.textContent = view;
-  e.target.classList.toggle("on", view === "graph");
+  const t = e.currentTarget;
+  t.innerHTML = view === "graph" ? `${icon("chart")}graph` : `${icon("grid")}matrix`;
+  t.classList.toggle("on", view === "graph");
   render();
 };
 document.getElementById("t-ext").onclick = e => {
@@ -1148,6 +1267,15 @@ document.getElementById("search").oninput = e => { query = e.target.value.toLowe
 document.getElementById("glyph-legend").innerHTML = Object.entries(KINDS)
   .map(([k, v]) => `<span class="glyph-key"><span class="g-${k}">${v.glyph}</span>${esc(v.label)}</span>`).join("");
 
+document.getElementById("badge-legend").innerHTML = [
+  ["cyc", "in a cycle"],
+  ["hub", "40+ importers"],
+  ["leaf", "depends on nothing"],
+  ["entry", "entry point — nothing imports it by design"],
+  ["uncalled", "nothing imports it and it is not an entrypoint"],
+].map(([b, what]) => `${badgePill(b)} ${what}`).join(" ");
+
+paintIcons();
 readHash();
 render();
 if (pendingOpen) openFile(pendingOpen[0], pendingOpen[1]);
