@@ -109,6 +109,77 @@ def test_framework_routes_and_published_entries_are_not_dead_code(tmp_path):
     assert [payload["files"][i] for i in dead] == ["src/orphan.ts"]
 
 
+def test_django_conventions_are_not_dead_code(tmp_path):
+    """Django reaches these by string or by autodiscovery — `manage.py <name>`,
+    `INSTALLED_APPS`, `ROOT_URLCONF` — so nothing ever imports them."""
+    _write(tmp_path, {
+        "manage.py": "import sys\n",
+        "posthog/apps.py": "class Config:\n    pass\n",
+        "posthog/urls.py": "urlpatterns = []\n",
+        "posthog/admin.py": "admin_site = 1\n",
+        "posthog/management/commands/backfill.py": "class Command:\n    pass\n",
+        "posthog/templatetags/assets.py": "def tag():\n    pass\n",
+        "posthog/orphan.py": "def unused():\n    pass\n",
+    })
+    payload = build_graph_payload(tmp_path, include_sources=False)
+    entries = {payload["files"][i] for i in payload["entries"]}
+
+    assert "posthog/management/commands/backfill.py" in entries
+    assert "posthog/templatetags/assets.py" in entries
+    assert "posthog/apps.py" in entries
+    assert "posthog/orphan.py" not in entries
+    assert "django" in payload["stats"]["entry_presets"]
+
+    dead, _test_only = orphans(Graph(payload))
+    assert [payload["files"][i] for i in dead] == ["posthog/orphan.py"]
+
+
+def test_django_rules_stay_off_without_manage_py(tmp_path):
+    _write(tmp_path, {
+        "pkg/apps.py": "class Config:\n    pass\n",
+        "pkg/orphan.py": "def unused():\n    pass\n",
+    })
+    payload = build_graph_payload(tmp_path, include_sources=False)
+    dead = {payload["files"][i] for i in orphans(Graph(payload))[0]}
+
+    assert dead == {"pkg/apps.py", "pkg/orphan.py"}
+    assert "django" not in payload["stats"]["entry_presets"]
+
+
+def test_submodule_import_behind_an_alias_keeps_its_target_alive(tmp_path):
+    """`from pkg import sub as alias` must land on `sub.py`, not on the package
+    `__init__.py` — otherwise the submodule reads as dead."""
+    _write(tmp_path, {
+        "manage.py": "import sys\n",
+        "pkg/__init__.py": "",
+        "pkg/apps.py": "from pkg.api import registrations as reg\n",
+        "pkg/api/__init__.py": "",
+        "pkg/api/registrations.py": "def register():\n    pass\n",
+    })
+    payload = build_graph_payload(tmp_path, include_sources=False)
+    edges = _edge_map(payload)
+
+    assert ("pkg/apps.py", "pkg/api/registrations.py") in edges
+    assert ("pkg/apps.py", "pkg/api/__init__.py") not in edges
+
+    dead, _test_only = orphans(Graph(payload))
+    assert [payload["files"][i] for i in dead] == []
+
+
+def test_asset_imports_do_not_create_a_barrel_cycle(tmp_path):
+    _write(tmp_path, {
+        "src/Spinner/Spinner.tsx": "import './Spinner.scss';\nexport const Spinner = 1;\n",
+        "src/Spinner/Spinner.scss": ".spinner {}\n",
+        "src/Spinner/index.ts": "export * from './Spinner';\n",
+    })
+    payload = build_graph_payload(tmp_path, include_sources=False)
+    edges = _edge_map(payload)
+
+    assert ("src/Spinner/index.ts", "src/Spinner/Spinner.tsx") in edges
+    assert ("src/Spinner/Spinner.tsx", "src/Spinner/index.ts") not in edges
+    assert file_cycles(Graph(payload)) == []
+
+
 def test_custom_entry_globs_suppress_a_directory(tmp_path):
     _write(tmp_path, {
         "generated/a.ts": "export const a = 1;\n",

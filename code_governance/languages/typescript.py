@@ -16,6 +16,17 @@ if TYPE_CHECKING:
 
 _EXTENSIONS = (".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs")
 
+# Specifiers a bundler turns into an asset, not a module edge. `.json` is here
+# too: it is never a scanned node, so the only thing it can resolve to is a
+# wrong neighbour.
+_ASSET_EXTENSIONS = frozenset({
+    ".css", ".scss", ".sass", ".less", ".styl",
+    ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".ico", ".bmp",
+    ".woff", ".woff2", ".ttf", ".otf", ".eot",
+    ".mp4", ".webm", ".mp3", ".wav", ".ogg",
+    ".json", ".md", ".txt", ".csv", ".wasm", ".graphql", ".gql",
+})
+
 _MAX_WORKSPACE_LOOKUP_DEPTH = 3
 
 
@@ -239,6 +250,11 @@ class TypeScriptPatterns:
         module_files: dict[str, str],
         imported_name: Optional[str] = None,
     ) -> Optional[str]:
+        # `import './Spinner.scss'` is a bundler asset, not a module. Stripping the
+        # extension and falling back to the directory index resolves it onto the
+        # sibling barrel — which re-exports the importer, inventing a cycle.
+        if PurePosixPath(import_source).suffix in _ASSET_EXTENSIONS:
+            return None
         candidates = self._expand_candidates(import_source, importing_file, config)
         for cand in candidates:
             resolved = self._lookup(cand, importable_map)

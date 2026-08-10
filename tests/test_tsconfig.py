@@ -65,6 +65,26 @@ def test_extends_child_overrides_base(tmp_path):
     assert cfg.paths == {"@/*": ["src/*"]}
 
 
+def test_extends_anchors_base_url_to_declaring_config(tmp_path):
+    """A `{"extends": "../tsconfig.json"}` stub must not re-anchor the parent's
+    `baseUrl` under its own folder — PostHog's frontend/tsconfig.json is exactly
+    this, and re-anchoring turned `frontend/` into `frontend/frontend/`."""
+    (tmp_path / "tsconfig.json").write_text(
+        '{"compilerOptions": {"baseUrl": "frontend/", "paths": {"lib/*": ["src/lib/*"]}}}'
+    )
+    child = tmp_path / "frontend"
+    child.mkdir()
+    (child / "tsconfig.json").write_text('{"extends": "../tsconfig.json"}')
+
+    cfg = load_tsconfig(child)
+    assert cfg is not None
+    assert cfg.base_url == "frontend/"
+    assert cfg.config_dir == tmp_path.resolve()
+    assert (cfg.config_dir / cfg.base_url / "src/lib").resolve() == (
+        tmp_path / "frontend" / "src" / "lib"
+    ).resolve()
+
+
 def test_extends_skips_npm_resolved(tmp_path):
     (tmp_path / "tsconfig.json").write_text(
         '{"extends": "@tsconfig/node18/tsconfig.json", "compilerOptions": {"baseUrl": "."}}'

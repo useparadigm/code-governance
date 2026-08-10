@@ -22,12 +22,13 @@ def load_tsconfig(repo_root: Path, filename: str | list[str] = "tsconfig.json") 
         if not path.exists():
             continue
         try:
-            merged = _load_with_extends(path, visited=set())
+            loaded = _load_with_extends(path, visited=set())
         except Exception as e:
             print(f"Warning: failed to parse {path}: {e}", file=sys.stderr)
             continue
-        if merged is None:
+        if loaded is None:
             continue
+        merged, origin = loaded
 
         compiler_options = merged.get("compilerOptions", {})
         base_url = compiler_options.get("baseUrl")
@@ -38,11 +39,16 @@ def load_tsconfig(repo_root: Path, filename: str | list[str] = "tsconfig.json") 
                 if isinstance(value, list):
                     paths[key] = [str(v) for v in value]
 
-        return TsConfig(base_url=base_url, paths=paths, config_dir=path.parent.resolve())
+        # `baseUrl` and `paths` are relative to the config that *declares* them, not
+        # to the one that inherited them through `extends` — a `{"extends": "../"}`
+        # stub would otherwise re-anchor the parent's targets under its own folder.
+        anchor = origin.get("baseUrl") or origin.get("paths") or path.parent.resolve()
+        return TsConfig(base_url=base_url, paths=paths, config_dir=anchor)
     return None
 
 
-def _load_with_extends(path: Path, visited: set[Path]) -> Optional[dict]:
+def _load_with_extends(path: Path, visited: set[Path]) -> Optional[tuple[dict, dict[str, Path]]]:
+    """(merged config, declaring directory per compilerOptions key)."""
     resolved = path.resolve()
     if resolved in visited:
         return None
@@ -50,13 +56,16 @@ def _load_with_extends(path: Path, visited: set[Path]) -> Optional[dict]:
 
     raw = path.read_text(encoding="utf-8", errors="replace")
     data = json.loads(_strip_jsonc(raw))
+    own_dir = path.parent.resolve()
+    own_origin = {k: own_dir for k in data.get("compilerOptions", {})}
 
     extends = data.get("extends")
     if not extends:
-        return data
+        return data, own_origin
 
     extends_list = extends if isinstance(extends, list) else [extends]
     merged: dict = {}
+    origin: dict[str, Path] = {}
     for ext in extends_list:
         if not isinstance(ext, str):
             continue
@@ -69,13 +78,16 @@ def _load_with_extends(path: Path, visited: set[Path]) -> Optional[dict]:
         if not candidate.exists():
             print(f"Warning: extends target not found: {candidate}", file=sys.stderr)
             continue
-        base = _load_with_extends(candidate, visited)
-        if base:
+        loaded = _load_with_extends(candidate, visited)
+        if loaded:
+            base, base_origin = loaded
             merged = _shallow_merge(merged, base)
+            origin.update(base_origin)
 
     merged = _shallow_merge(merged, data)
     merged.pop("extends", None)
-    return merged
+    origin.update(own_origin)
+    return merged, origin
 
 
 def _shallow_merge(base: dict, override: dict) -> dict:

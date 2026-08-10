@@ -61,6 +61,9 @@ class EntryRule:
     suffixes: tuple[str, ...] = ()
     under: tuple[str, ...] = ()
     dirs: frozenset[str] = frozenset()
+    # Whole-path globs, for conventions a single path segment cannot express
+    # (`**/management/commands/*.py` — `commands` alone would match too much).
+    globs: tuple[str, ...] = ()
 
 
 _TS_ROUTE_STEMS = frozenset({
@@ -107,6 +110,16 @@ _ENTRY_RULES: dict[str, tuple[EntryRule, ...]] = {
                 "manage.py", "wsgi.py", "asgi.py",
             }),
             dirs=frozenset({"scripts", "bin", "tools", "migrations"}),
+        ),
+        # Django reaches these by string or by convention, never by import:
+        # `INSTALLED_APPS` names the app (which loads `apps.py`), `ROOT_URLCONF`
+        # is a dotted string, `manage.py <name>` runs a command module, and the
+        # admin and template engines autodiscover their per-app modules.
+        EntryRule(
+            name="django",
+            markers=("manage.py",),
+            filenames=frozenset({"apps.py", "urls.py", "admin.py"}),
+            globs=("**/management/commands/*.py", "**/templatetags/*.py"),
         ),
     ),
 }
@@ -392,6 +405,8 @@ def _is_entry(rel: str, rules: list[EntryRule], custom_globs: tuple[str, ...] = 
     name = p.name
     stem = name.split(".")[0]
     for rule in rules:
+        if rule.globs and any(_glob_match(pattern, rel) for pattern in rule.globs):
+            return True
         if rule.dirs and dirs & rule.dirs:
             return True
         if rule.filenames and name in rule.filenames:
