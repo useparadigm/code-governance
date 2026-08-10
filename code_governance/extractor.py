@@ -73,5 +73,9 @@ def _should_skip(path: Path) -> bool:
         "__pycache__", ".git", "node_modules", ".venv", "venv",
         ".tox", ".mypy_cache", ".pytest_cache", "dist", "build",
         ".eggs", "bin", "obj",
+        # JS/TS build and cache output. These hold generated .ts/.js that mirrors
+        # real source, so scanning them double-counts every file they shadow.
+        ".next", ".nuxt", ".svelte-kit", ".turbo", ".expo", ".vercel", ".output",
+        ".parcel-cache", "coverage", "storybook-static",
     }
     return any(part in skip_dirs for part in path.parts)

@@ -1,0 +1,1156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>__TITLE__ — dependency drill-down</title>
+<style>
+:root {
+  --bg: #fff; --bg-panel: #f8f9fa; --bg-hover: #e9ecef; --bg-selected: #dee2e6;
+  --text: #212529; --text-muted: #6c757d; --border: #dee2e6;
+  --red: #dc3545; --amber: #fd7e14; --green: #198754; --blue: #0d6efd; --badge-bg: #e9ecef;
+  --kind-barrel: #0d9488; --kind-component: #7c3aed; --kind-types: #0891b2; --kind-script: #b45309;
+  --ext: #9333ea;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1a2e; --bg-panel: #16213e; --bg-hover: #1a2744; --bg-selected: #1f3050;
+    --text: #e0e0e0; --text-muted: #8899aa; --border: #2a3a4a;
+    --red: #ff6b6b; --amber: #ffa94d; --green: #51cf66; --blue: #74c0fc; --badge-bg: #2a3a4a;
+    --kind-barrel: #4ec9b0; --kind-component: #c586c0; --kind-types: #56b6c2; --kind-script: #d19a66;
+    --ext: #b197fc;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace; font-size: 13px;
+       background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+.header { padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--bg-panel);
+          display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.crumbs { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.crumb { cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+.crumb:hover { background: var(--bg-hover); }
+.crumb.active { background: var(--bg-selected); font-weight: 600; }
+.sep { color: var(--text-muted); }
+.stat { display: flex; gap: 5px; }
+.stat-label { color: var(--text-muted); }
+.stat-value { font-weight: 600; }
+.stat-value.bad { color: var(--red); }
+.spacer { flex: 1; }
+input[type=search] { background: var(--bg); color: var(--text); border: 1px solid var(--border);
+                     border-radius: 4px; padding: 3px 8px; font-family: inherit; font-size: 12px; width: 180px; }
+.toggle { cursor: pointer; user-select: none; color: var(--text-muted); padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px; }
+.toggle.on { color: var(--text); background: var(--bg-selected); }
+.main { flex: 1; display: flex; min-height: 0; }
+.canvas { flex: 1; overflow: auto; position: relative; }
+.side { width: 380px; border-left: 1px solid var(--border); background: var(--bg-panel); overflow-y: auto; padding: 12px; }
+.side h3 { font-size: 13px; margin-bottom: 2px; word-break: break-all; }
+.side .sub { color: var(--text-muted); font-size: 11px; margin-bottom: 10px; }
+.section-label { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-muted);
+                 margin: 12px 0 5px; border-bottom: 1px solid var(--border); padding-bottom: 3px; }
+.row { display: flex; justify-content: space-between; gap: 8px; padding: 3px 5px; border-radius: 3px; cursor: pointer; }
+.row:hover { background: var(--bg-hover); }
+/* names wrap instead of truncating — an elided path is useless for navigation */
+.row .name { overflow-wrap: anywhere; white-space: normal; }
+.row .dir { color: var(--text-muted); opacity: .7; }
+.row .num { color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.syms { padding: 0 6px 5px 22px; display: flex; flex-wrap: wrap; gap: 3px; }
+.sym { font-size: 10px; padding: 0 5px; border-radius: 3px; background: var(--badge-bg); color: var(--text-muted); }
+.sym.more { opacity: .7; }
+.row.unused-sym .name { color: var(--text-muted); text-decoration: line-through; text-decoration-thickness: 1px; }
+.row.unused-sym .num { color: var(--red); }
+.sites { padding: 2px 0 6px 14px; font-size: 11px; color: var(--text-muted); }
+.sites div { padding: 1px 0; word-break: break-all; }
+.pill { display: inline-block; padding: 0 5px; border-radius: 8px; background: var(--badge-bg); font-size: 11px; margin-right: 4px; }
+.pill.red { background: var(--red); color: #fff; }
+.empty { color: var(--text-muted); padding: 20px; }
+svg { display: block; }
+.node rect { fill: var(--bg-panel); stroke: var(--border); stroke-width: 1.2; rx: 6; cursor: pointer; }
+.node.sel rect { stroke: var(--blue); stroke-width: 2.4; fill: var(--bg-selected); }
+.node.cyc rect { stroke: var(--red); }
+.node.dim { opacity: .22; }
+.node text { pointer-events: none; }
+.node .label { font-size: 12px; fill: var(--text); font-weight: 600; }
+.node .meta { font-size: 10px; fill: var(--text-muted); }
+.node .glyph { font-size: 12px; fill: var(--text-muted); }
+.node .loc-bar { fill: var(--blue); opacity: .5; }
+.node.sel .loc-bar { opacity: .9; }
+.node .badge { opacity: .85; }
+.node .badge-t { font-size: 9px; fill: #fff; text-anchor: middle; font-weight: 600; }
+.b-red { fill: var(--red); } .b-amber { fill: var(--amber); }
+.b-green { fill: var(--green); } .b-blue { fill: var(--blue); } .b-muted { fill: var(--text-muted); }
+
+/* one colour per kind, used by the glyph in the graph and in every list */
+.k-folder .glyph, .g-folder { fill: var(--blue); color: var(--blue); }
+.k-barrel .glyph, .g-barrel { fill: var(--kind-barrel); color: var(--kind-barrel); }
+.k-entry .glyph, .g-entry { fill: var(--amber); color: var(--amber); }
+.k-component .glyph, .g-component { fill: var(--kind-component); color: var(--kind-component); }
+.k-types .glyph, .g-types { fill: var(--kind-types); color: var(--kind-types); }
+.k-config .glyph, .g-config { fill: var(--text-muted); color: var(--text-muted); }
+.k-script .glyph, .g-script { fill: var(--kind-script); color: var(--kind-script); }
+.k-module .glyph, .g-module { fill: var(--green); color: var(--green); }
+.glyph-key { display: inline-flex; gap: 4px; align-items: center; margin-right: 10px; }
+
+/* is anyone calling this? — stated once, at the top of the side panel */
+.banner { padding: 6px 8px; border-radius: 5px; font-weight: 600; font-size: 11px; margin: 8px 0; }
+.banner.entry { background: color-mix(in srgb, var(--amber) 22%, transparent); color: var(--amber); }
+.banner.uncalled { background: color-mix(in srgb, var(--red) 20%, transparent); color: var(--red); }
+.banner.called { background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--green); }
+.group-label { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-muted);
+               margin: 10px 0 3px; display: flex; gap: 5px; align-items: center; }
+.group-label:first-child { margin-top: 2px; }
+.edge { fill: none; stroke: var(--text-muted); opacity: .38; }
+.edge.back { stroke: var(--red); opacity: .75; stroke-dasharray: 4 3; }
+.edge.hi { stroke: var(--blue); opacity: .95; }
+.edge.dim { opacity: .05; }
+.elabel { font-size: 9px; fill: var(--text-muted); }
+/* the outside world: dashed, violet, never filled — visibly not part of this level */
+.ghost rect { fill: none; stroke: var(--ext); stroke-width: 1.2; stroke-dasharray: 6 4; rx: 6; cursor: pointer; }
+.ghost:hover rect { fill: color-mix(in srgb, var(--ext) 12%, transparent); }
+.ghost .label { font-size: 11px; fill: var(--ext); font-weight: 600; }
+.ghost .meta { font-size: 9px; fill: var(--ext); opacity: .75; }
+.ghost text { pointer-events: none; }
+.ghost.dim { opacity: .3; }
+.edge.ext { stroke: var(--ext); opacity: .5; stroke-dasharray: 6 4; }
+.edge.ext.hi { opacity: 1; stroke-dasharray: none; }
+table.matrix { border-collapse: collapse; font-size: 11px; margin: 12px; }
+table.matrix th { font-weight: 500; color: var(--text-muted); padding: 2px 4px; }
+table.matrix th.col { writing-mode: vertical-rl; text-align: left; height: 90px; }
+table.matrix th.row { text-align: right; white-space: nowrap; }
+table.matrix td { width: 26px; height: 20px; text-align: center; border: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+table.matrix td.z { color: var(--border); }
+table.matrix td.diag { background: var(--bg-hover); }
+/* cross-highlight: the same file, wherever it is showing */
+.cl.xhi { background: color-mix(in srgb, var(--amber) 26%, transparent); }
+.cl.xhi .gut { background: color-mix(in srgb, var(--amber) 26%, transparent); }
+.row.xhi { background: color-mix(in srgb, var(--amber) 20%, transparent);
+           box-shadow: inset 2px 0 0 var(--amber); }
+.node.xhi rect { stroke: var(--amber); stroke-width: 2.4; }
+.node.xhi .loc-bar { opacity: .9; }
+.ghost.xhi { opacity: 1; }
+.ghost.xhi rect { stroke-width: 2.4; stroke-dasharray: none; fill: color-mix(in srgb, var(--ext) 16%, transparent); }
+.legend { position: sticky; bottom: 0; padding: 6px 12px; font-size: 11px; color: var(--text-muted);
+          background: var(--bg); border-top: 1px solid var(--border); }
+
+/* ---- code viewer ---- */
+:root { --c-cmt: #6a9955aa; --c-str: #a31515; --c-kw: #af00db; --c-num: #098658; --c-typ: #267f99; --c-tag: #800000; --c-cur: #fff3bf; }
+@media (prefers-color-scheme: dark) {
+  :root { --c-cmt: #7f9f7f; --c-str: #ce9178; --c-kw: #c586c0; --c-num: #b5cea8; --c-typ: #4ec9b0; --c-tag: #569cd6; --c-cur: #33406b; }
+}
+.code-pane { flex: 0 0 50vw; display: flex; flex-direction: column; min-width: 0; border-left: 1px solid var(--border); }
+.split-handle { flex: 0 0 5px; cursor: col-resize; background: var(--border); opacity: .5; }
+.split-handle:hover, .split-handle.drag { opacity: 1; background: var(--blue); }
+.code-head { display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--bg-panel); }
+.code-head .path { font-weight: 600; overflow-wrap: anywhere; }
+.code-head .btn { cursor: pointer; padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-muted); }
+.code-head .btn:hover { background: var(--bg-hover); color: var(--text); }
+.code { flex: 1; overflow: auto; font-size: 12px; line-height: 1.5; padding: 6px 0 40vh; }
+.cl { display: flex; white-space: pre; }
+.cl .gut { flex: 0 0 52px; text-align: right; padding-right: 10px; color: var(--text-muted); opacity: .55;
+           user-select: none; position: sticky; left: 0; background: var(--bg); }
+.cl .src { padding-right: 20px; }
+.cl.cur { background: var(--c-cur); }
+.cl.lk { cursor: pointer; }
+.cl.lk .gut { color: var(--blue); opacity: 1; font-weight: 600; }
+.cl.lk:hover { background: var(--bg-hover); }
+.cmt { color: var(--c-cmt); font-style: italic; }
+.str { color: var(--c-str); }
+.kw  { color: var(--c-kw); }
+.num { color: var(--c-num); }
+.typ { color: var(--c-typ); }
+.tag { color: var(--c-tag); }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="crumbs" id="crumbs"></div>
+  <div class="spacer"></div>
+  <div class="stat"><span class="stat-label">nodes</span><span class="stat-value" id="s-nodes">0</span></div>
+  <div class="stat"><span class="stat-label">files</span><span class="stat-value" id="s-files">0</span></div>
+  <div class="stat"><span class="stat-label">loc</span><span class="stat-value" id="s-loc">0</span></div>
+  <div class="stat"><span class="stat-label">edges</span><span class="stat-value" id="s-edges">0</span></div>
+  <div class="stat"><span class="stat-label">cycles</span><span class="stat-value" id="s-cycles">0</span></div>
+  <span class="toggle on" id="t-view">graph</span>
+  <span class="toggle on" id="t-ext">externals</span>
+  <span class="toggle" id="t-type">hide type-only</span>
+  <input type="search" id="search" placeholder="filter nodes…">
+</div>
+<div class="main">
+  <div class="canvas" id="canvas"></div>
+  <div class="split-handle" id="handle" style="display:none"></div>
+  <div class="code-pane" id="codepane" style="display:none">
+    <div class="code-head">
+      <span class="btn" onclick="codeBack()">←</span>
+      <span class="btn" onclick="closeCode()">graph</span>
+      <span class="path" id="code-path"></span>
+    </div>
+    <div class="code" id="code"></div>
+  </div>
+  <div class="side" id="side"></div>
+</div>
+<div class="legend">
+  <span id="glyph-legend"></span>
+  <span class="pill red">cyc</span> in a cycle
+  <span class="pill">hub</span> 40+ importers
+  <span class="pill">leaf</span> depends on nothing
+  <span class="pill">entry</span> entry point — nothing imports it by design
+  <span class="pill red">uncalled</span> nothing imports it and it is not an entrypoint
+  · <span style="color:var(--ext)">dashed violet = outside this folder; select a node to trace its outside edges, click a ghost to go there</span> · bar under a node = lines of code
+</div>
+<div class="legend" id="legend">click any node = details in the side panel · click file = open source · double-click folder = drill in · breadcrumb = drill out · red dashed edge = cycle back-edge (type-only imports excluded)</div>
+<script>
+const DATA = __DATA__;
+const SOURCES = __SOURCES__;
+const FILES = DATA.files;
+const PARTS = FILES.map(f => f.split("/"));
+const SYMS = DATA.symbols;
+const LOC = DATA.lines || FILES.map(() => 0);
+
+/* ---------- what kind of thing is this? ---------- */
+
+const ENTRY_FILES = new Set(["page.tsx", "layout.tsx", "template.tsx", "route.ts", "error.tsx",
+  "loading.tsx", "not-found.tsx", "middleware.ts", "_layout.tsx", "global-error.tsx",
+  "instrumentation.ts", "instrumentation-client.ts", "sitemap.ts", "robots.ts", "manifest.ts"]);
+
+const KINDS = {
+  folder:    { glyph: "▣", label: "folder" },
+  barrel:    { glyph: "◎", label: "barrel (index)" },
+  entry:     { glyph: "▶", label: "entrypoint (route/page/middleware)" },
+  component: { glyph: "◆", label: "component (.tsx)" },
+  types:     { glyph: "◇", label: "types" },
+  config:    { glyph: "⚙", label: "config" },
+  script:    { glyph: "▷", label: "script (.mjs/.js)" },
+  module:    { glyph: "●", label: "module (.ts)" },
+};
+
+function fileKind(name) {
+  if (/\.config\.[cm]?[jt]sx?$/.test(name) || name.endsWith(".setup.ts")) return "config";
+  if (/^index\.[cm]?[jt]sx?$/.test(name)) return "barrel";
+  if (ENTRY_FILES.has(name)) return "entry";
+  if (name.endsWith(".d.ts") || /(^|[-.])types?\.tsx?$/.test(name)) return "types";
+  if (/\.[jt]sx$/.test(name)) return "component";
+  if (/\.[cm]?js$/.test(name)) return "script";
+  return "module";
+}
+
+/* Entry points detected during the scan — framework routes, package `exports`
+   targets, user-supplied globs. The name-based rules below are the fallback for a
+   payload built without them. */
+const ENTRY_SET = new Set(DATA.entries || []);
+
+function nodeKind(n) {
+  if (n.isDir) return "folder";
+  if (n.files.length === 1 && ENTRY_SET.has(n.files[0]) && fileKind(n.name) === "module") return "entry";
+  return fileKind(n.name);
+}
+
+function fmtLoc(v) { return v >= 10000 ? (v / 1000).toFixed(0) + "k" : v >= 1000 ? (v / 1000).toFixed(1) + "k" : String(v); }
+
+/* Structure first, noise last — folders and entrypoints carry the architecture,
+   configs and scripts are scenery. Within a kind, biggest first. */
+const KIND_ORDER = ["folder", "entry", "barrel", "component", "module", "types", "script", "config"];
+const KIND_RANK = Object.fromEntries(KIND_ORDER.map((k, i) => [k, i]));
+const KIND_GROUP = {
+  folder: "folders", entry: "entrypoints", barrel: "barrels", component: "components",
+  module: "modules", types: "types", script: "scripts", config: "config",
+};
+
+function byKindThenSize(a, b) {
+  const ka = KIND_RANK[nodeKind(a)], kb = KIND_RANK[nodeKind(b)];
+  return ka - kb || b.loc - a.loc || a.name.localeCompare(b.name);
+}
+const EDGES = DATA.edges; // [src, dst, count, lines[], typeOnlyCount]
+
+let focus = [];
+let selected = null;
+let view = "graph";
+let hideTypeOnly = false;
+let showExternals = true;
+let query = "";
+let expanded = new Set();
+let expandedSymbols = new Set();
+let level = null;
+
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function underFocus(i) {
+  const p = PARTS[i];
+  if (p.length <= focus.length) return false;
+  for (let k = 0; k < focus.length; k++) if (p[k] !== focus[k]) return false;
+  return true;
+}
+
+function childSeg(i) { return PARTS[i][focus.length]; }
+
+function edgeWeight(e) { return hideTypeOnly ? e[2] - e[4] : e[2]; }
+/** Sites that survive compilation. `import type` is erased, so it can never close
+ *  an import loop — cycle detection uses this regardless of the display toggle. */
+function edgeValueWeight(e) { return e[2] - e[4]; }
+
+function buildLevel() {
+  const nodes = new Map();
+  const owner = new Int32Array(FILES.length).fill(-1);
+  const order = [];
+  for (let i = 0; i < FILES.length; i++) {
+    if (!underFocus(i)) continue;
+    const seg = childSeg(i);
+    let n = nodes.get(seg);
+    if (!n) {
+      n = { name: seg, path: focus.concat([seg]).join("/"), isDir: PARTS[i].length > focus.length + 1,
+            files: [], symbols: 0, loc: 0, out: 0, in: 0, extOut: 0, extIn: 0, self: 0, idx: order.length };
+      nodes.set(seg, n); order.push(n);
+    }
+    if (PARTS[i].length > focus.length + 1) n.isDir = true;
+    n.files.push(i); n.symbols += SYMS[i]; n.loc += LOC[i];
+    owner[i] = n.idx;
+  }
+
+  const links = new Map();
+  const ghostIn = new Map(), ghostOut = new Map();
+  const extOutDetail = order.map(() => new Map());
+  const extInDetail = order.map(() => new Map());
+  for (const e of EDGES) {
+    const w = edgeWeight(e);
+    if (w <= 0) continue;
+    const a = owner[e[0]], b = owner[e[1]];
+    if (a === -1 && b === -1) continue;
+    if (a !== -1 && b !== -1) {
+      if (a === b) { order[a].self += w; continue; }
+      const key = a + ">" + b;
+      let l = links.get(key);
+      if (!l) { l = { s: a, t: b, count: 0, value: 0, sites: [] }; links.set(key, l); }
+      l.count += w;
+      l.value += Math.max(0, edgeValueWeight(e));
+      if (l.sites.length < 200) l.sites.push([e[0], e[1], e[3][0] || 0, w]);
+      order[a].out += w; order[b].in += w;
+    } else if (a !== -1) {
+      order[a].extOut += w;
+      const k = outsideLabel(e[1]);
+      extOutDetail[a].set(k, (extOutDetail[a].get(k) || 0) + w);
+      addGhostLink(ghostOut, k, a, w, e);
+    } else {
+      order[b].extIn += w;
+      const k = outsideLabel(e[0]);
+      extInDetail[b].set(k, (extInDetail[b].get(k) || 0) + w);
+      addGhostLink(ghostIn, k, b, w, e);
+    }
+  }
+  order.forEach((n, i) => { n.extOutDetail = extOutDetail[i]; n.extInDetail = extInDetail[i]; });
+
+  const linkList = [...links.values()];
+  const { sccOf, cycleCount } = tarjan(order.length, linkList.filter(l => l.value > 0));
+  order.forEach((n, i) => { n.scc = sccOf[i]; });
+  const sccSize = {};
+  for (const s of sccOf) sccSize[s] = (sccSize[s] || 0) + 1;
+  order.forEach(n => { n.inCycle = sccSize[n.scc] > 1; });
+  for (const l of linkList) l.back = l.value > 0 && sccOf[l.s] === sccOf[l.t];
+
+  layerize(order, linkList, sccOf);
+  const toGhosts = m => [...m.entries()].map(([path, g]) => ({
+    path, name: path, isGhost: true, total: g.total,
+    links: [...g.perNode.entries()].map(([node, v]) => ({ node, count: v.count, sites: v.sites })),
+  })).sort((x, y) => y.total - x.total);
+  return { nodes: order, links: linkList, cycleCount, owner, ghostIn: toGhosts(ghostIn), ghostOut: toGhosts(ghostOut) };
+}
+
+/** A file outside the focus, named at the same depth the focus sits at — so from
+ *  `src/lib` a caller in `src/app/(tabs)/add-task.tsx` reads as
+ *  `src/app`: the sibling folder, not a full path. */
+function addGhostLink(store, key, nodeIdx, weight, edge) {
+  let g = store.get(key);
+  if (!g) { g = { total: 0, perNode: new Map() }; store.set(key, g); }
+  g.total += weight;
+  let per = g.perNode.get(nodeIdx);
+  if (!per) { per = { count: 0, sites: [] }; g.perNode.set(nodeIdx, per); }
+  per.count += weight;
+  if (per.sites.length < 60) per.sites.push([edge[0], edge[1], edge[3][0] || 1, weight]);
+}
+
+function outsideLabel(fileIdx) {
+  const p = PARTS[fileIdx];
+  const depth = Math.max(1, Math.min(focus.length, p.length - 1));
+  return p.slice(0, depth).join("/");
+}
+
+function tarjan(n, links) {
+  const adj = Array.from({ length: n }, () => []);
+  for (const l of links) adj[l.s].push(l.t);
+  const index = new Int32Array(n).fill(-1), low = new Int32Array(n), onstack = new Uint8Array(n);
+  const sccOf = new Int32Array(n).fill(-1);
+  const stack = []; let counter = 0, sccId = 0, cycleCount = 0;
+  for (let root = 0; root < n; root++) {
+    if (index[root] !== -1) continue;
+    const work = [[root, 0]];
+    while (work.length) {
+      const frame = work[work.length - 1];
+      const v = frame[0];
+      if (frame[1] === 0) { index[v] = low[v] = counter++; stack.push(v); onstack[v] = 1; }
+      let recursed = false;
+      while (frame[1] < adj[v].length) {
+        const w = adj[v][frame[1]++];
+        if (index[w] === -1) { work.push([w, 0]); recursed = true; break; }
+        else if (onstack[w]) low[v] = Math.min(low[v], index[w]);
+      }
+      if (recursed) continue;
+      if (low[v] === index[v]) {
+        let size = 0, w;
+        do { w = stack.pop(); onstack[w] = 0; sccOf[w] = sccId; size++; } while (w !== v);
+        if (size > 1) cycleCount++;
+        sccId++;
+      }
+      work.pop();
+      if (work.length) { const p = work[work.length - 1][0]; low[p] = Math.min(low[p], low[v]); }
+    }
+  }
+  return { sccOf, cycleCount };
+}
+
+function layerize(nodes, links, sccOf) {
+  // longest path over the SCC condensation: layer 0 = pure dependency (no outgoing)
+  const sccOut = new Map();
+  for (const l of links) {
+    if (sccOf[l.s] === sccOf[l.t]) continue;
+    if (!sccOut.has(sccOf[l.s])) sccOut.set(sccOf[l.s], new Set());
+    sccOut.get(sccOf[l.s]).add(sccOf[l.t]);
+  }
+  const memo = new Map();
+  const depth = (s, seen) => {
+    if (memo.has(s)) return memo.get(s);
+    if (seen.has(s)) return 0;
+    seen.add(s);
+    let d = 0;
+    for (const t of (sccOut.get(s) || [])) d = Math.max(d, 1 + depth(t, seen));
+    seen.delete(s);
+    memo.set(s, d);
+    return d;
+  };
+  for (const n of nodes) n.layer = depth(n.scc, new Set());
+}
+
+/* ---------- rendering ---------- */
+
+function matches(n) { return !query || n.name.toLowerCase().includes(query); }
+
+function render() {
+  level = buildLevel();
+  document.getElementById("s-nodes").textContent = level.nodes.length;
+  document.getElementById("s-files").textContent = level.nodes.reduce((a, n) => a + n.files.length, 0);
+  document.getElementById("s-loc").textContent = fmtLoc(level.nodes.reduce((a, n) => a + n.loc, 0));
+  document.getElementById("s-edges").textContent = level.links.reduce((a, l) => a + l.count, 0);
+  const cy = document.getElementById("s-cycles");
+  cy.textContent = level.cycleCount;
+  cy.className = "stat-value" + (level.cycleCount ? " bad" : "");
+  renderCrumbs();
+  if (view === "graph") renderGraph(); else renderMatrix();
+  if (openIdx !== null) renderCodeSide(); else renderSide();
+}
+
+function renderCrumbs() {
+  const el = document.getElementById("crumbs");
+  const parts = ["repo", ...focus];
+  el.innerHTML = parts.map((p, i) =>
+    `<span class="crumb ${i === parts.length - 1 ? "active" : ""}" onclick="goTo(${i})">${esc(p)}</span>` +
+    (i < parts.length - 1 ? '<span class="sep">/</span>' : "")
+  ).join("");
+}
+
+function goTo(i) { hideCode(); focus = focus.slice(0, i); selected = null; expanded.clear(); syncHash(); render(); }
+function drill(name) {
+  const n = level.nodes.find(x => x.name === name);
+  if (!n || !n.isDir) return;
+  focus = focus.concat([name]); selected = null; expanded.clear(); syncHash(); render();
+}
+function syncHash() { history.replaceState(null, "", focus.length ? "#" + focus.join("/") : "#"); }
+
+let pendingOpen = null;
+
+/** `#src/lib` focuses a level; `#file:src/lib/auth.ts:42` opens source at a line. */
+function readHash() {
+  const h = decodeURIComponent(location.hash.replace(/^#/, "")).replace(/^\/|\/$/g, "");
+  pendingOpen = null;
+  if (h.startsWith("file:")) {
+    const m = h.slice(5).match(/^(.*?)(?::(\d+))?$/);
+    const idx = FILES.indexOf(m[1]);
+    if (idx >= 0) { focus = FILES[idx].split("/").slice(0, -1); pendingOpen = [idx, +(m[2] || 0)]; return; }
+  }
+  focus = h ? h.split("/") : [];
+}
+window.addEventListener("hashchange", () => { readHash(); selected = null; hideCode(); render(); if (pendingOpen) openFile(pendingOpen[0], pendingOpen[1]); });
+
+const NH = 52, GAPX = 24, GAPY = 70, CHAR_W = 7.25, PAD = 40;
+
+/** Boxes are sized to their own label — truncating names is what made the graph
+ *  unreadable, so width follows the text instead of the text following the box. */
+function nodeWidth(n) {
+  const label = n.name + (n.isDir ? "/" : "") + badges(n).join(" ");
+  const meta = metaLine(n);
+  const chars = Math.max(label.length, meta.length * 0.84);
+  return Math.max(170, Math.min(440, Math.round(chars * CHAR_W + PAD)));
+}
+
+function metaLine(n) {
+  return `${n.files.length}f · ${fmtLoc(n.loc)} loc · ${n.symbols}s · in ${n.in} · out ${n.out}` +
+    (n.extOut || n.extIn ? ` · ext ${n.extIn}/${n.extOut}` : "");
+}
+
+/** Directories that hold a framework entry file. Everything beside a `page.tsx` /
+ *  `_layout.tsx` is part of the routes tree, so file-based routing runs it even
+ *  though no import points at it — Expo Router mounts every screen in `app/`. */
+const ROUTE_DIRS = (() => {
+  const dirs = new Set();
+  FILES.forEach((f, i) => {
+    if (ENTRY_FILES.has(PARTS[i][PARTS[i].length - 1])) dirs.add(PARTS[i].slice(0, -1).join("/"));
+  });
+  return dirs;
+})();
+
+function fileEntryByDesign(i) {
+  if (ENTRY_SET.has(i)) return true;
+  const name = PARTS[i][PARTS[i].length - 1];
+  const k = fileKind(name);
+  if (k === "entry" || k === "config" || k === "script") return true;
+  if (name.endsWith(".d.ts")) return true;  // ambient declarations: tsc reads them, imports never do
+  return ROUTE_DIRS.has(PARTS[i].slice(0, -1).join("/"));
+}
+
+/** Nothing imports it. Either that is the point (a route, a script, a config the
+ *  toolchain runs) or nobody calls it, which is a different and worse thing. */
+function ENTRY_BY_DESIGN(n) {
+  // a folder counts as an entry when it *contains* runnable things — a routes tree
+  // is not "uncalled" just because it also holds ordinary components
+  return n.files.some(fileEntryByDesign);
+}
+
+/** Role at a glance: what depends on it, what it depends on, is it in a cycle. */
+function badges(n) {
+  const out = [];
+  if (n.inCycle) out.push("cyc");
+  const totalIn = n.in + n.extIn, totalOut = n.out + n.extOut;
+  if (totalIn >= 40) out.push("hub");
+  if (totalOut === 0 && totalIn > 0) out.push("leaf");
+  if (totalIn === 0) out.push(ENTRY_BY_DESIGN(n) ? "entry point" : "uncalled");
+  return out;
+}
+
+const BADGE_CLASS = {
+  cyc: "b-red", hub: "b-amber", leaf: "b-green",
+  entry: "b-blue", "entry point": "b-blue", uncalled: "b-red",
+};
+// the graph boxes are tight; the panels spell it out
+const BADGE_SHORT = { "entry point": "entry" };
+
+const GH = 40;  // ghost band row height
+
+function ghostLabel(g, incoming) { return `${incoming ? "\u2196" : "\u2198"} ${g.name}/`; }
+function ghostMeta(g, incoming) {
+  return `outside \u00b7 ${g.total} import site${g.total === 1 ? "" : "s"} ${incoming ? "into" : "from"} here`;
+}
+
+/** Size to the widest of the two lines, at their own font sizes (label 11px,
+ *  meta 9px). Measuring the name alone overflowed every short path. */
+function ghostWidth(g, incoming) {
+  const label = ghostLabel(g, incoming).length * 6.7;
+  const meta = ghostMeta(g, incoming).length * 5.5;
+  return Math.max(160, Math.min(480, Math.round(Math.max(label, meta) + 24)));
+}
+
+/** Lay the outside world out as dashed "ghost" boxes: who calls into this folder
+ *  (band above) and what it reaches out to (band below). They are not part of the
+ *  level's own graph — no cycles, no layers — just context at its edges. */
+function layoutGhosts(list, y, avail, incoming) {
+  let x = 20, maxX = 0, rows = list.length ? 1 : 0;
+  for (const g of list) {
+    g.w = ghostWidth(g, incoming);
+    if (x > 20 && x + g.w > avail - 20) { x = 20; y += GH + 10; rows++; }
+    g.x = x; g.y = y;
+    x += g.w + GAPX;
+    maxX = Math.max(maxX, g.x + g.w + 20);
+  }
+  return { height: rows ? rows * (GH + 10) : 0, width: maxX };
+}
+
+function renderGraph() {
+  const { nodes, links } = level;
+  if (!nodes.length) { document.getElementById("canvas").innerHTML = '<div class="empty">no files here</div>'; return; }
+  const byLayer = new Map();
+  for (const n of nodes) { if (!byLayer.has(n.layer)) byLayer.set(n.layer, []); byLayer.get(n.layer).push(n); }
+  const layers = [...byLayer.keys()].sort((a, b) => b - a); // most-dependent on top
+  // flow-pack each layer into whatever width the canvas actually has — the code pane
+  // takes half the window when open
+  const avail = Math.max(320, document.getElementById("canvas").clientWidth || window.innerWidth);
+  const ghostIn = showExternals ? level.ghostIn : [];
+  const ghostOut = showExternals ? level.ghostOut : [];
+  const inBand = layoutGhosts(ghostIn, 20, avail, true);
+  let y = 20 + (inBand.height ? inBand.height + 34 : 0), width = inBand.width;
+  layers.forEach(L => {
+    const group = byLayer.get(L).sort((a, b) => (b.out + b.in) - (a.out + a.in));
+    let x = 20;
+    group.forEach(n => {
+      n.w = nodeWidth(n);
+      if (x > 20 && x + n.w > avail - 20) { x = 20; y += NH + 14; }
+      n.x = x; n.y = y;
+      x += n.w + GAPX;
+      width = Math.max(width, n.x + n.w + 20);
+    });
+    y += NH + GAPY;
+  });
+  const outBand = layoutGhosts(ghostOut, y + 6, avail, false);
+  width = Math.max(width, outBand.width);
+  const height = y + outBand.height + 30;
+
+  const maxCount = Math.max(1, ...links.map(l => l.count));
+  const parts = [`<svg width="${Math.max(width, 400)}" height="${height}">`];
+  parts.push(`<defs><marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/></marker></defs>`);
+  for (const l of links) {
+    const a = nodes[l.s], b = nodes[l.t];
+    const x1 = a.x + a.w / 2, y1 = a.y + NH, x2 = b.x + b.w / 2, y2 = b.y;
+    const sw = 0.8 + 3.6 * Math.sqrt(l.count / maxCount);
+    const my = (y1 + y2) / 2;
+    const d = (b.y > a.y)
+      ? `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`
+      : `M${a.x + a.w},${a.y + NH / 2} C${a.x + a.w + 60},${a.y + NH / 2} ${b.x + b.w + 60},${b.y + NH / 2} ${b.x + b.w},${b.y + NH / 2}`;
+    parts.push(`<path class="edge${l.back ? " back" : ""}" data-s="${l.s}" data-t="${l.t}" d="${d}" stroke-width="${sw.toFixed(2)}" marker-end="url(#ah)"/>`);
+  }
+  const maxLoc = Math.max(1, ...nodes.map(n => n.loc));
+  for (const n of nodes) {
+    const kind = nodeKind(n);
+    const cls = ["node", "k-" + kind, n.inCycle ? "cyc" : "", selected === n.name ? "sel" : "", matches(n) ? "" : "dim"].join(" ").trim();
+    const arg = "'" + esc(n.name).replace(/'/g, "\\'") + "'";
+    const bar = Math.round((n.w - 2) * Math.sqrt(n.loc / maxLoc));  // sqrt so small files stay visible
+    let bx = n.x + n.w - 8;
+    const badgeSvg = badges(n).map(b => BADGE_SHORT[b] || b).reverse().map(b => {
+      const w = b.length * 6.4 + 8;
+      bx -= w + 4;
+      return `<rect class="badge ${BADGE_CLASS[b]}" x="${bx}" y="${n.y + 7}" width="${w}" height="14" rx="7"/>
+              <text class="badge-t" x="${bx + w / 2}" y="${n.y + 17}">${b}</text>`;
+    }).join("");
+    parts.push(`<g class="${cls}" data-node="${n.idx}" onclick="nodeClick(${arg})" ondblclick="nodeOpen(${arg})"
+      onmouseenter="nodeHover(${n.idx}, true)" onmouseleave="nodeHover(${n.idx}, false)">
+      <rect x="${n.x}" y="${n.y}" width="${n.w}" height="${NH}"/>
+      <rect class="loc-bar" x="${n.x + 1}" y="${n.y + NH - 5}" width="${bar}" height="4"/>
+      <text class="glyph" x="${n.x + 10}" y="${n.y + 19}">${KINDS[kind].glyph}</text>
+      <text class="label" x="${n.x + 26}" y="${n.y + 19}">${esc(n.name)}${n.isDir ? "/" : ""}</text>
+      <text class="meta" x="${n.x + 10}" y="${n.y + 37}">${esc(metaLine(n))}</text>
+      ${badgeSvg}
+    </g>`);
+  }
+  // Ghost boxes are always drawn; their edges only for the selected node, otherwise
+  // a couple of outside folders fan 50 lines across the whole level and bury it.
+  const si = selected ? nodes.findIndex(n => n.name === selected) : -1;
+  for (const g of [...ghostIn, ...ghostOut]) {
+    const incoming = ghostIn.includes(g);
+    const linked = si !== -1 && g.links.some(l => l.node === si);
+    const arg = "'" + esc(g.path).replace(/'/g, "\\'") + "'";
+    parts.push(`<g class="ghost${si !== -1 && !linked ? " dim" : ""}" data-ghost="${esc(g.path)}" onclick="goToPath(${arg})">
+      <rect x="${g.x}" y="${g.y}" width="${g.w}" height="${GH}"/>
+      <text class="label" x="${g.x + 12}" y="${g.y + 17}">${esc(ghostLabel(g, incoming))}</text>
+      <text class="meta" x="${g.x + 12}" y="${g.y + 31}">${esc(ghostMeta(g, incoming))}</text>
+    </g>`);
+    for (const l of g.links) {
+      if (l.node !== si) continue;
+      const n = nodes[l.node];
+      const [x1, y1, x2, y2] = incoming
+        ? [g.x + g.w / 2, g.y + GH, n.x + n.w / 2, n.y]
+        : [n.x + n.w / 2, n.y + NH, g.x + g.w / 2, g.y];
+      const my = (y1 + y2) / 2;
+      parts.push(`<path class="edge ext" data-ext="${l.node}" d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}"
+        stroke-width="${(0.8 + 3.2 * Math.sqrt(l.count / maxCount)).toFixed(2)}" marker-end="url(#ah)"/>`);
+    }
+  }
+  parts.push("</svg>");
+  document.getElementById("canvas").innerHTML = parts.join("");
+  highlightEdges();
+}
+
+function highlightEdges() {
+  const si = selected ? level.nodes.findIndex(n => n.name === selected) : -1;
+  document.querySelectorAll("path.edge").forEach(p => {
+    p.classList.remove("hi", "dim");
+    if (si === -1) return;
+    if (p.dataset.ext !== undefined) {
+      if (+p.dataset.ext === si) p.classList.add("hi"); else p.classList.add("dim");
+      return;
+    }
+    const s = +p.dataset.s, t = +p.dataset.t;
+    if (s === si || t === si) p.classList.add("hi"); else p.classList.add("dim");
+  });
+}
+
+/** One file can be visible in three places at once: a line in the source, a row in
+ *  the side panel, and a box in the graph. Hovering any of them lights the others. */
+function linkHover(fileIdx, on, reveal) {
+  document.querySelectorAll(`[data-file="${fileIdx}"]`).forEach(el => el.classList.toggle("xhi", on));
+  const ni = level && level.owner ? level.owner[fileIdx] : -1;
+  if (ni !== undefined && ni !== -1) {
+    document.querySelector(`g.node[data-node="${ni}"]`)?.classList.toggle("xhi", on);
+    if (on && reveal) revealInGraph(level.nodes[ni]);
+  } else if (focus.length) {
+    // lives outside the focus — light the ghost that stands in for its folder
+    const path = outsideLabel(fileIdx).replace(/"/g, "");
+    // a folder can appear in both bands (it calls in *and* is called out to)
+    document.querySelectorAll(`g.ghost[data-ghost="${path}"]`).forEach(g => g.classList.toggle("xhi", on));
+    const ghost = [...(level.ghostIn || []), ...(level.ghostOut || [])].find(g => g.path === path);
+    if (on && reveal && ghost) revealInGraph(ghost);
+  }
+  if (!on) cancelReveal();
+}
+
+/** Hovering a graph node lights every row and source line that names one of its files. */
+function nodeHover(nodeIdx, on, reveal) {
+  const n = level.nodes[nodeIdx];
+  if (!n) return;
+  for (const f of n.files) {
+    document.querySelectorAll(`[data-file="${f}"]`).forEach(el => el.classList.toggle("xhi", on));
+  }
+  document.querySelector(`g.node[data-node="${nodeIdx}"]`)?.classList.toggle("xhi", on);
+  if (on && reveal) revealInGraph(n); else if (!on) cancelReveal();
+}
+
+let revealTimer = null;
+
+function cancelReveal() { clearTimeout(revealTimer); revealTimer = null; }
+
+/** Bring a box into view, but only when it is actually off-screen, and only after a
+ *  short dwell — scrolling on every row the pointer crosses would be seasickness. */
+function revealInGraph(box, delay = 160) {
+  cancelReveal();
+  if (view !== "graph" || !box || box.x === undefined) return;
+  revealTimer = setTimeout(() => {
+    const c = document.getElementById("canvas");
+    const h = box.w === undefined ? 0 : (box.total !== undefined ? GH : NH);
+    const pad = 60;
+    let top = c.scrollTop, left = c.scrollLeft;
+    if (box.y - pad < top) top = Math.max(0, box.y - pad);
+    else if (box.y + h + pad > top + c.clientHeight) top = box.y + h + pad - c.clientHeight;
+    if (box.x - pad < left) left = Math.max(0, box.x - pad);
+    else if (box.x + box.w + pad > left + c.clientWidth) left = box.x + box.w + pad - c.clientWidth;
+    if (top !== c.scrollTop || left !== c.scrollLeft) c.scrollTo({ top, left, behavior: "smooth" });
+  }, delay);
+}
+
+/** Jump straight to a ghost's folder — the outside world is one click away. */
+function goToPath(path) {
+  hideCode();
+  focus = path.split("/");
+  selected = null;
+  expanded.clear();
+  syncHash();
+  render();
+}
+
+function renderMatrix() {
+  const { nodes, links } = level;
+  const m = {};
+  for (const l of links) m[l.s + ">" + l.t] = l.count;
+  const idx = nodes.map((n, i) => i).sort((a, b) => nodes[a].layer - nodes[b].layer || nodes[a].name.localeCompare(nodes[b].name));
+  let html = '<table class="matrix"><tr><th></th>';
+  for (const c of idx) html += `<th class="col">${esc(nodes[c].name)}</th>`;
+  html += "</tr>";
+  for (const r of idx) {
+    html += `<tr><th class="row">${esc(nodes[r].name)}</th>`;
+    for (const c of idx) {
+      const v = m[r + ">" + c] || 0;
+      const cls = r === c ? "diag" : v ? "" : "z";
+      const style = v ? ` style="background: color-mix(in srgb, var(--blue) ${Math.min(70, 12 + v)}%, transparent)"` : "";
+      html += `<td class="${cls}"${style}>${r === c ? "·" : (v || "")}</td>`;
+    }
+    html += "</tr>";
+  }
+  html += "</table>";
+  document.getElementById("canvas").innerHTML = html;
+}
+
+function select(name) { selected = selected === name ? null : name; if (view === "graph") renderGraph(); renderSide(); }
+
+function toggleSymbol(name, line) {
+  const key = "s:" + name;
+  expandedSymbols.has(key) ? expandedSymbols.delete(key) : expandedSymbols.add(key);
+  const target = document.getElementById("L" + line);
+  if (target) {
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    target.classList.add("cur");
+    setTimeout(() => { if (line !== openLine) target.classList.remove("cur"); }, 1600);
+  }
+  renderCodeSide();
+}
+
+function toggleSites(key) { expanded.has(key) ? expanded.delete(key) : expanded.add(key); renderSide(); }
+
+function siteList(l) {
+  return l.sites.map(s => {
+    const from = FILES[s[0]].split("/").slice(focus.length).join("/");
+    const to = FILES[s[1]].split("/").slice(focus.length).join("/");
+    return `<div class="row" onclick="openFile(${s[0]}, ${s[2]})" title="open source at line ${s[2]}">${esc(from)}:${s[2]} → ${esc(to)}${s[3] > 1 ? ` (${s[3]})` : ""}</div>`;
+  }).join("");
+}
+
+/** A node is a single file when its only member file is exactly that path. */
+function nodeFileIdx(n) {
+  return !n.isDir && n.files.length === 1 ? n.files[0] : -1;
+}
+
+function nodeOpen(name) {
+  const n = level.nodes.find(x => x.name === name);
+  if (!n) return;
+  if (n.isDir) return drill(name);
+  const idx = nodeFileIdx(n);
+  if (idx >= 0) openFile(idx, 0);
+}
+
+/** Single click: select (details land in the side panel) and, for a file, open its
+ *  source. Double click still drills into a folder. */
+function nodeClick(name) {
+  const n = level.nodes.find(x => x.name === name);
+  select(name);   // details render into the side panel; the diagram stays unobscured
+  if (!n || selected !== name || n.isDir) return;
+  const idx = nodeFileIdx(n);
+  if (idx >= 0) openFile(idx, 0);
+}
+
+/** Every import of this node from outside it, as concrete file:line call sites.
+ *  The question a graph can't answer by shape alone: is anyone actually calling this? */
+function callSites(n) {
+  const own = new Set(n.files);
+  const rows = [];
+  let internal = 0;
+  for (const e of EDGES) {
+    const w = edgeWeight(e);
+    if (w <= 0) continue;
+    if (!own.has(e[1])) continue;
+    if (own.has(e[0])) { internal += w; continue; }
+    rows.push({ src: e[0], dst: e[1], count: w, line: e[3][0] || 1 });
+  }
+  rows.sort((a, b) => b.count - a.count || FILES[a.src].localeCompare(FILES[b.src]));
+  return { rows, internal };
+}
+
+
+function renderSide() {
+  const el = document.getElementById("side");
+  if (!selected) {
+    let lastKind = null;
+    const rows = [...level.nodes].sort(byKindThenSize).map(n => {
+      const k = nodeKind(n);
+      const heading = k === lastKind ? "" :
+        `<div class="group-label"><span class="g-${k}">${KINDS[k].glyph}</span> ${KIND_GROUP[k]}</div>`;
+      lastKind = k;
+      const tags = badges(n).map(b => `<span class="pill ${b === "cyc" ? "red" : ""}">${b}</span>`).join("");
+      return heading + `<div class="row" onclick="nodeClick('${esc(n.name).replace(/'/g, "\\'")}')"
+        onmouseenter="nodeHover(${n.idx}, true, true)" onmouseleave="nodeHover(${n.idx}, false)">
+        <span class="name">${esc(n.name)}${n.isDir ? "/" : ""} ${tags}</span>
+        <span class="num">${fmtLoc(n.loc)} loc · in ${n.in} · out ${n.out}</span>
+      </div>`;
+    }).join("");
+    el.innerHTML = `<div class="section-label">modules at this level</div>${rows || '<div class="empty">nothing here</div>'}`;
+    return;
+  }
+  const i = level.nodes.findIndex(n => n.name === selected);
+  const n = level.nodes[i];
+  const out = level.links.filter(l => l.s === i).sort((a, b) => b.count - a.count);
+  const kind = nodeKind(n);
+  const { rows, internal } = callSites(n);
+  const callers = new Set(rows.map(r => r.src)).size;
+  const totalSites = rows.reduce((a, r) => a + r.count, 0);
+
+  let html = `<h3><span class="g-${kind}">${KINDS[kind].glyph}</span> ${esc(n.path)}${n.isDir ? "/" : ""}</h3>
+    <div class="sub">${KINDS[kind].label} · ${n.files.length} file${n.files.length === 1 ? "" : "s"} · ${fmtLoc(n.loc)} loc · ${n.symbols} symbols · ${n.self} internal edges</div>
+    <div class="sub">${badges(n).map(b => `<span class="pill ${b === "cyc" ? "red" : ""}">${b}</span>`).join("")}</div>`;
+
+  if (rows.length) {
+    html += `<div class="banner called">called from ${callers} file${callers === 1 ? "" : "s"} · ${totalSites} import site${totalSites === 1 ? "" : "s"}</div>`;
+  } else if (ENTRY_BY_DESIGN(n)) {
+    html += `<div class="banner entry">entry point — nothing imports it, by design</div>`;
+  } else {
+    html += `<div class="banner uncalled">uncalled — nothing imports it, and it is not an entrypoint</div>`;
+  }
+
+  if (n.isDir) html += `<div class="row" onclick="drill('${esc(n.name).replace(/'/g, "\\'")}')"><span class="name">&#8627; drill into ${esc(n.name)}/</span></div>`;
+  const fi = nodeFileIdx(n);
+  if (fi >= 0) html += `<div class="row" onclick="openFile(${fi}, 0)"><span class="name">&#8627; open source</span></div>`;
+
+  if (rows.length) {
+    html += `<div class="section-label">call sites (${totalSites})</div>`;
+    html += rows.slice(0, 40).map(r => {
+      const where = FILES[r.src], cut = where.lastIndexOf("/") + 1, base = where.slice(cut);
+      const into = n.files.length > 1 ? ` &rarr; ${esc(FILES[r.dst].split("/").pop())}` : "";
+      return `<div class="row" data-file="${r.src}" onclick="openFile(${r.src}, ${r.line})" title="${esc(where)}"
+        onmouseenter="linkHover(${r.src}, true, true)" onmouseleave="linkHover(${r.src}, false)">
+        <span class="name"><span class="g-${fileKind(base)}">${KINDS[fileKind(base)].glyph}</span> <span class="dir">${esc(where.slice(0, cut))}</span>${esc(base)}:${r.line}${into}</span>
+        <span class="num">${r.count}</span></div>`;
+    }).join("");
+    if (rows.length > 40) html += `<div class="sub">+${rows.length - 40} more callers</div>`;
+    if (internal) html += `<div class="sub">${internal} further import sites from inside ${esc(n.name)}/</div>`;
+  }
+
+  html += `<div class="section-label">depends on (${out.reduce((a, l) => a + l.count, 0)})</div>`;
+  html += out.map(l => {
+    const key = "o" + l.s + ">" + l.t;
+    return `<div class="row" onclick="toggleSites('${key}')"><span class="name">${l.back ? '<span class="pill red">&#8634;</span>' : ""}&rarr; ${esc(level.nodes[l.t].name)}</span><span class="num">${l.count}</span></div>` +
+      (expanded.has(key) ? `<div class="sites">${siteList(l)}</div>` : "");
+  }).join("") || '<div class="sub">none</div>';
+
+  const extOut = [...n.extOutDetail.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
+  if (extOut.length) html += `<div class="section-label">outside this level &mdash; depends on (${n.extOut})</div>` +
+    extOut.map(([k, v]) => `<div class="row"><span class="name">&#8674; ${esc(k)}</span><span class="num">${v}</span></div>`).join("");
+  el.innerHTML = html;
+}
+
+/* ---------- code viewer ---------- */
+
+const LINKS = DATA.links || FILES.map(() => []);
+const IMPORTERS = FILES.map(() => []);
+LINKS.forEach((list, src) => list.forEach(([line, tgt]) => IMPORTERS[tgt].push([line, src])));
+
+/* ---------- symbol level ---------- */
+
+const EXPORTS = DATA.exports || FILES.map(() => []);
+
+/** file -> exported name -> [[importer, line]] : who imports each symbol, already
+ *  re-attributed through `export … from` barrels by the extractor. */
+const SYMBOL_USERS = DATA.symbol_users || FILES.map(() => ({}));
+
+function symbolUsers(fileIdx, name) {
+  const sites = SYMBOL_USERS[fileIdx] && SYMBOL_USERS[fileIdx][name];
+  return sites ? sites.map(([src, line]) => ({ src, line })) : [];
+}
+
+/** Names an importer pulls out of one target file, for the edge lists. */
+function symbolsBetween(srcIdx, dstIdx) {
+  const names = new Set();
+  for (const e of DATA.edges) {
+    if (e[0] !== srcIdx || e[1] !== dstIdx) continue;
+    for (const [, name] of (e[5] || [])) names.add(name);
+  }
+  return [...names];
+}
+
+let openIdx = null, openLine = 0;
+const history_ = [];
+
+const KEYWORDS = new Set(("abstract as async await break case catch class const continue declare default delete do else enum export " +
+  "extends false finally for from function get if implements import in instanceof interface is keyof let new null of private " +
+  "protected public readonly return satisfies set static super switch this throw true try type typeof undefined var void while yield").split(" "));
+
+const TOKEN = new RegExp([
+  /\/\*[\s\S]*?\*\//.source,
+  /\/\/[^\n]*/.source,
+  /`(?:\\[\s\S]|[^\\`])*`/.source,
+  /"(?:\\.|[^"\\\n])*"/.source,
+  /'(?:\\.|[^'\\\n])*'/.source,
+  /<\/?[A-Za-z][\w.]*/.source,
+  /\b\d[\w.]*/.source,
+  /[A-Za-z_$][\w$]*/.source,
+].join("|"), "g");
+
+function tokenClass(tok) {
+  const c = tok[0];
+  if (c === "/" && (tok[1] === "/" || tok[1] === "*")) return "cmt";
+  if (c === '"' || c === "'" || c === "`") return "str";
+  if (c === "<") return "tag";
+  if (c >= "0" && c <= "9") return "num";
+  if (KEYWORDS.has(tok)) return "kw";
+  if (c >= "A" && c <= "Z") return "typ";
+  return null;
+}
+
+/** Highlight, splitting any multi-line token so no span crosses a newline —
+ *  that keeps the result safe to split into per-line rows. */
+function highlight(src) {
+  let out = "", last = 0, m;
+  TOKEN.lastIndex = 0;
+  while ((m = TOKEN.exec(src)) !== null) {
+    out += esc(src.slice(last, m.index));
+    const cls = tokenClass(m[0]);
+    out += cls
+      ? m[0].split("\n").map(part => `<span class="${cls}">${esc(part)}</span>`).join("\n")
+      : esc(m[0]);
+    last = m.index + m[0].length;
+  }
+  out += esc(src.slice(last));
+  return out.split("\n");
+}
+
+function openFile(idx, line, push) {
+  if (idx == null || idx < 0) return;
+  if (push !== false && openIdx !== null) history_.push([openIdx, openLine]);
+  openIdx = idx; openLine = line || 0;
+  history.replaceState(null, "", "#file:" + FILES[idx] + (openLine ? ":" + openLine : ""));
+  document.getElementById("codepane").style.display = "flex";
+  document.getElementById("handle").style.display = "block";
+  if (view === "graph") renderGraph();  // canvas just got narrower — reflow the columns
+  document.getElementById("code-path").textContent = FILES[idx];
+  document.getElementById("legend").textContent =
+    "blue line number = resolved import, click to follow · ← = back · graph = return to diagram";
+
+  const lines = highlight(SOURCES[idx]);
+  const linkAt = new Map();
+  for (const [ln, tgt] of LINKS[idx]) if (!linkAt.has(ln)) linkAt.set(ln, tgt);
+  const html = lines.map((h, i) => {
+    const n = i + 1;
+    const tgt = linkAt.get(n);
+    const cls = "cl" + (tgt !== undefined ? " lk" : "") + (n === openLine ? " cur" : "");
+    const wire = tgt !== undefined
+      ? ` data-file="${tgt}" onclick="openFile(${tgt}, 1)" title="→ ${esc(FILES[tgt])}"` +
+        ` onmouseenter="linkHover(${tgt}, true, true)" onmouseleave="linkHover(${tgt}, false)"`
+      : "";
+    return `<div class="${cls}" id="L${n}"${wire}><span class="gut">${n}</span><span class="src">${h || " "}</span></div>`;
+  }).join("");
+  const el = document.getElementById("code");
+  el.innerHTML = html;
+  const target = document.getElementById("L" + (openLine || 1));
+  if (target) target.scrollIntoView({ block: openLine ? "center" : "start" });
+  else el.scrollTop = 0;
+  renderCodeSide();
+  // keep the diagram pointed at whatever you just opened
+  const ni = level && level.owner ? level.owner[idx] : -1;
+  if (ni !== undefined && ni !== -1) revealInGraph(level.nodes[ni], 0);
+}
+
+function codeBack() {
+  const prev = history_.pop();
+  if (!prev) return closeCode();
+  openFile(prev[0], prev[1], false);
+}
+
+function hideCode() {
+  if (openIdx === null) return;
+  openIdx = null; history_.length = 0;
+  document.getElementById("codepane").style.display = "none";
+  document.getElementById("handle").style.display = "none";
+}
+
+/* drag the divider to rebalance graph vs. code */
+(function () {
+  const handle = document.getElementById("handle"), pane = document.getElementById("codepane");
+  let dragging = false;
+  handle.addEventListener("mousedown", e => { dragging = true; handle.classList.add("drag"); e.preventDefault(); });
+  window.addEventListener("mousemove", e => {
+    if (!dragging) return;
+    const right = document.getElementById("side").offsetWidth;
+    const w = Math.max(320, Math.min(window.innerWidth - 260, window.innerWidth - right - e.clientX));
+    pane.style.flexBasis = w + "px";
+  });
+  window.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false; handle.classList.remove("drag");
+    if (view === "graph") renderGraph();
+  });
+  let resizeTimer;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => { if (view === "graph") renderGraph(); }, 120);
+  });
+})();
+
+function closeCode() {
+  hideCode();
+  document.getElementById("legend").textContent =
+    "click any node = details in the side panel · click file = open source · double-click folder = drill in · breadcrumb = drill out · red dashed edge = cycle back-edge (type-only imports excluded)";
+  render();
+}
+
+function groupBy(pairs, key) {
+  const m = new Map();
+  for (const [line, other] of pairs) {
+    if (!m.has(other)) m.set(other, []);
+    m.get(other).push(line);
+  }
+  return [...m.entries()].sort((a, b) => b[1].length - a[1].length);
+}
+
+/** Full path, directory dimmed. Two trailing segments used to be enough until
+ *  `packages/shared/src/index.ts` and `packages/core/src/index.ts` both
+ *  rendered as "src/index.ts" — the abbreviation was inventing wrong answers. */
+function relRow(fileIdx, lines, dir, jumpLine, symbols) {
+  const full = FILES[fileIdx];
+  const cut = full.lastIndexOf("/") + 1;
+  const k = fileKind(full.slice(cut));
+  const syms = symbols && symbols.length
+    ? `<div class="syms">${symbols.slice(0, 12).map(n => `<span class="sym">${esc(n)}</span>`).join("")}` +
+      (symbols.length > 12 ? `<span class="sym more">+${symbols.length - 12}</span>` : "") + `</div>`
+    : "";
+  return `<div class="row" data-file="${fileIdx}" onclick="openFile(${fileIdx}, ${jumpLine})" title="${esc(full)}"
+    onmouseenter="linkHover(${fileIdx}, true, true)" onmouseleave="linkHover(${fileIdx}, false)">
+    <span class="name">${dir} <span class="g-${k}">${KINDS[k].glyph}</span> <span class="dir">${esc(full.slice(0, cut))}</span>${esc(full.slice(cut))}</span>
+    <span class="num">${lines.length}</span></div>${syms}`;
+}
+
+function renderCodeSide() {
+  const el = document.getElementById("side");
+  const imports = groupBy(LINKS[openIdx]);
+  const importers = groupBy(IMPORTERS[openIdx]);
+  const name = FILES[openIdx].split("/").pop();
+  const k = fileKind(name);
+  let html = `<h3><span class="g-${k}">${KINDS[k].glyph}</span> ${esc(name)}</h3>
+    <div class="sub">${esc(FILES[openIdx])}</div>
+    <div class="sub">${KINDS[k].label} · ${LOC[openIdx]} loc · ${SYMS[openIdx]} symbols · ${LINKS[openIdx].length} imports · used by ${IMPORTERS[openIdx].length}</div>`;
+
+  // same verdict as the graph gives, so it travels with you into the source
+  const callerCount = new Set(IMPORTERS[openIdx].map(([, src]) => src)).size;
+  if (callerCount) {
+    html += `<div class="banner called">called from ${callerCount} file${callerCount === 1 ? "" : "s"} · ${IMPORTERS[openIdx].length} import site${IMPORTERS[openIdx].length === 1 ? "" : "s"}</div>`;
+  } else if (fileEntryByDesign(openIdx)) {
+    html += `<div class="banner entry">entry point — nothing imports it, by design</div>`;
+  } else {
+    html += `<div class="banner uncalled">uncalled — nothing imports it, and it is not an entrypoint</div>`;
+  }
+  const exps = EXPORTS[openIdx] || [];
+  if (exps.length) {
+    const dead = exps.filter(([name]) => symbolUsers(openIdx, name).length === 0).length;
+    html += `<div class="section-label">exports (${exps.length}${dead ? ` · ${dead} unused` : ""})</div>`;
+    html += exps.map(([name, line, from]) => {
+      const users = symbolUsers(openIdx, name);
+      const key = "s:" + name;
+      const open = expandedSymbols.has(key);
+      const cls = users.length ? "" : " unused-sym";
+      const detail = open && users.length
+        ? `<div class="sites">` + users.map(u =>
+            `<div class="row" data-file="${u.src}" onclick="event.stopPropagation(); openFile(${u.src}, ${u.line})"
+              onmouseenter="linkHover(${u.src}, true, true)" onmouseleave="linkHover(${u.src}, false)"
+              title="${esc(FILES[u.src])}">${esc(FILES[u.src])}:${u.line}</div>`).join("") + `</div>`
+        : "";
+      return `<div class="row${cls}" onclick="toggleSymbol('${esc(name).replace(/'/g, "\\'")}', ${line})">
+        <span class="name">${users.length ? (open ? "▾" : "▸") : "·"} ${esc(name)}${from ? ` <span class="sym more">re-export</span>` : ""}</span>
+        <span class="num">${users.length ? users.length + " use" + (users.length === 1 ? "" : "s") : "unused"}</span>
+      </div>` + detail;
+    }).join("");
+  }
+
+  html += `<div class="section-label">imports (${imports.length} files)</div>`;
+  html += imports.map(([f, lines]) => relRow(f, lines, "→", 1, symbolsBetween(openIdx, f))).join("") || '<div class="sub">none resolved</div>';
+  html += `<div class="section-label">imported by (${importers.length} files)</div>`;
+  html += importers.map(([f, lines]) => relRow(f, lines, "←", lines[0], symbolsBetween(f, openIdx))).join("") || '<div class="sub">nothing</div>';
+  el.innerHTML = html;
+}
+
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && openIdx !== null) closeCode();
+});
+
+document.getElementById("t-view").onclick = e => {
+  view = view === "graph" ? "matrix" : "graph";
+  e.target.textContent = view;
+  e.target.classList.toggle("on", view === "graph");
+  render();
+};
+document.getElementById("t-ext").onclick = e => {
+  showExternals = !showExternals;
+  e.target.classList.toggle("on", showExternals);
+  render();
+};
+document.getElementById("t-type").onclick = e => {
+  hideTypeOnly = !hideTypeOnly;
+  e.target.classList.toggle("on", hideTypeOnly);
+  render();
+};
+document.getElementById("search").oninput = e => { query = e.target.value.toLowerCase(); if (view === "graph") renderGraph(); };
+
+document.getElementById("glyph-legend").innerHTML = Object.entries(KINDS)
+  .map(([k, v]) => `<span class="glyph-key"><span class="g-${k}">${v.glyph}</span>${esc(v.label)}</span>`).join("");
+
+readHash();
+render();
+if (pendingOpen) openFile(pendingOpen[0], pendingOpen[1]);
+</script>
+</body>
+</html>

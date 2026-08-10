@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Optional
 
 from ast_grep_py import SgNode
 
-from code_governance.schemas import ClassInfo, FileExtractionResult, ImportInfo
+from code_governance.schemas import ClassInfo, ExportInfo, FileExtractionResult, ImportInfo
 
 if TYPE_CHECKING:
     from code_governance.schemas import GovernanceConfig
@@ -39,6 +39,73 @@ class PythonPatterns:
             classes=classes,
             symbols=symbols,
         )
+
+    def extract_exports(self, root: SgNode, file_path: str) -> list[ExportInfo]:
+        """Python has no `export`, so the public surface is inferred:
+
+        `__all__` when present, otherwise every top-level definition and
+        assignment that is not underscore-prefixed. Names pulled in by a
+        *relative* import are recorded as re-exports — that is what an
+        `__init__.py` barrel is, and it lets symbol usage be walked back to the
+        module that declares the name. Absolute imports are left out: re-exporting
+        a third-party name is rare and claiming it would misattribute usage.
+        """
+        out: list[ExportInfo] = []
+        seen: set[str] = set()
+
+        def add(name: str, line: int, source: Optional[str] = None) -> None:
+            if name in seen:
+                return
+            seen.add(name)
+            out.append(ExportInfo(name=name, line=line, source=source))
+
+        for node in root.find_all(kind="import_from_statement"):
+            source = None
+            names: list[str] = []
+            for child in node.children():
+                if child.kind() in ("dotted_name", "relative_import"):
+                    if source is None:
+                        source = child.text()
+                    else:
+                        names.append(child.text().split(".")[0])
+                elif child.kind() == "aliased_import":
+                    alias = child.field("alias")
+                    if alias:
+                        names.append(alias.text())
+                elif child.kind() == "wildcard_import":
+                    names.append("*")
+            if not source or not source.startswith("."):
+                continue
+            line = node.range().start.line + 1
+            for name in names:
+                if name == "*":
+                    out.append(ExportInfo(name="*", line=line, source=source))
+                else:
+                    add(name, line, source)
+
+        declared = _explicit_all(root)
+        if declared is not None:
+            for name, line in declared:
+                add(name, line)
+            return out
+
+        for kind in ("class_definition", "function_definition"):
+            for node in root.find_all(kind=kind):
+                if node.parent() is not root:
+                    continue  # nested def/class is not module surface
+                name = node.field("name")
+                if name and not name.text().startswith("_"):
+                    add(name.text(), node.range().start.line + 1)
+        for node in root.children():
+            if node.kind() != "expression_statement":
+                continue
+            for child in node.children():
+                if child.kind() != "assignment":
+                    continue
+                left = child.field("left")
+                if left is not None and left.kind() == "identifier" and not left.text().startswith("_"):
+                    add(left.text(), child.range().start.line + 1)
+        return out
 
     def file_to_importable(self, file_path: str) -> Optional[str]:
         p = PurePosixPath(file_path)
@@ -221,6 +288,28 @@ class PythonPatterns:
             if name:
                 symbols.append(name.text())
         return symbols
+
+
+def _explicit_all(root: SgNode) -> Optional[list[tuple[str, int]]]:
+    """`__all__ = ["a", "b"]` as (name, line), or None if the module has no
+    `__all__`. An empty `__all__` is meaningful (exports nothing), so it returns
+    an empty list rather than None."""
+    for node in root.find_all(kind="assignment"):
+        left = node.field("left")
+        if left is None or left.text() != "__all__":
+            continue
+        right = node.field("right")
+        if right is None or right.kind() not in ("list", "tuple"):
+            continue
+        line = node.range().start.line + 1
+        names = []
+        for item in right.children():
+            if item.kind() == "string":
+                text = item.text().strip()
+                if len(text) >= 2:
+                    names.append((text[1:-1].strip("\"'"), line))
+        return names
+    return None
 
 
 def _type_checking_ranges(root: SgNode) -> list[tuple[int, int]]:

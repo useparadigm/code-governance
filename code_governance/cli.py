@@ -119,8 +119,38 @@ def main():
         action="store_true",
         help="Execute the generated test commands after analysis",
     )
+    parser.add_argument(
+        "--graph",
+        metavar="PATH",
+        nargs="?",
+        const=".",
+        help="Zero-config file-level dependency graph: findings report (--format text), "
+             "payload (--format json), or drill-down viewer (--format html)",
+    )
+    parser.add_argument(
+        "--graph-out",
+        metavar="DIR",
+        help="Write graph.html + findings.md into DIR instead of printing to stdout",
+    )
+    parser.add_argument(
+        "--entry",
+        metavar="GLOB",
+        action="append",
+        default=[],
+        help="Extra entry-point glob for --graph (repeatable): files matched are run, not "
+             "imported, so they are never reported as dead code",
+    )
+    parser.add_argument(
+        "--no-sources",
+        action="store_true",
+        help="Omit embedded source text from --graph output (much smaller, no code view)",
+    )
 
     args = parser.parse_args()
+
+    if args.graph is not None:
+        _handle_graph(args)
+        return
 
     if args.affected_tests is not None:
         _handle_affected_tests(args)
@@ -155,6 +185,58 @@ def main():
         return
 
     _handle_check(args)
+
+
+def _handle_graph(args):
+    from code_governance.graph_export import build_graph_payload
+    from code_governance.graph_findings import render_markdown, summary_line
+
+    root = Path(args.graph)
+    payload = build_graph_payload(
+        root,
+        include_sources=not args.no_sources,
+        entry_globs=tuple(args.entry),
+    )
+    name = payload.get("root") or root.resolve().name
+
+    if args.graph_out:
+        out_dir = Path(args.graph_out)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        viewer_path = out_dir / "graph.html"
+        findings_path = out_dir / "findings.md"
+        viewer_path.write_text(_render_graph_viewer(payload, name))
+        findings_path.write_text(render_markdown(payload, viewer=viewer_path.name, title=name))
+        print(f"{findings_path} · {viewer_path} ({viewer_path.stat().st_size / 1024 / 1024:.1f} MB)",
+              file=sys.stderr)
+        print(summary_line(payload), file=sys.stderr)
+        return
+
+    if args.format == "json":
+        print(json.dumps(payload, separators=(",", ":")))
+    elif args.format == "html":
+        print(_render_graph_viewer(payload, name))
+    else:
+        print(render_markdown(payload, viewer=None, title=name))
+        print(summary_line(payload), file=sys.stderr)
+
+
+def _render_graph_viewer(payload: dict, title: str) -> str:
+    """Inline the payload into the viewer. Sources go in their own placeholder so a
+    --no-sources run still produces a working (code-view-less) page."""
+    template_path = Path(__file__).resolve().parent / "viewer" / "drilldown.html"
+    graph = {k: v for k, v in payload.items() if k != "sources"}
+    graph_json = _script_safe(json.dumps(graph, separators=(",", ":")))
+    sources_json = _script_safe(json.dumps(payload.get("sources", []), separators=(",", ":")))
+    html = template_path.read_text()
+    return (html
+            .replace("__TITLE__", title)
+            .replace("__DATA__", graph_json)
+            .replace("__SOURCES__", sources_json))
+
+
+def _script_safe(json_text: str) -> str:
+    # `</script>` inside string data would close the tag early
+    return json_text.replace("</", "<\\/")
 
 
 def _handle_html_output(args):
