@@ -161,6 +161,23 @@ def test_python_exports_use_dunder_all_and_relative_reexports(tmp_path):
     assert [(name, src) for name, _line, src in exports["pkg/__init__.py"]] == [("Thing", ".impl")]
 
 
+def test_python_exports_without_dunder_all_list_top_level_definitions(tmp_path):
+    """Without `__all__` the surface is every top-level definition. The nesting check
+    compared two wrappers around the same node with `is`, which is never true, so this
+    came back empty for every plain module."""
+    _write(tmp_path, {
+        "pkg/models.py":
+            "class User:\n    def helper(self):\n        pass\n\n\n"
+            "def make_user():\n    return User()\n\n\n"
+            "def _private():\n    pass\n\n\nMAX = 3\n",
+    })
+    payload = build_graph_payload(tmp_path, include_sources=False)
+    exports = {f: payload["exports"][i] for i, f in enumerate(payload["files"])}
+
+    assert [name for name, _line, _src in exports["pkg/models.py"]] == ["User", "make_user", "MAX"]
+    assert dict((name, line) for name, line, _src in exports["pkg/models.py"])["User"] == 1
+
+
 def test_dynamic_import_keeps_a_file_out_of_the_dead_list(tmp_path):
     _write(tmp_path, {
         "src/index.ts": "export async function go() { return import('./heavy'); }\n",
