@@ -28,6 +28,29 @@ that analysis with every repo-specific assumption replaced by detection.
 - **Symbol-level attribution through barrels.** `export { x } from "./y"` and
   `export * from "./y"` chains are walked so usage lands on the file that
   declares the symbol — otherwise every barrelled module reads as unused.
+- **The graph is readable and movable.** Boxes drag (positions kept per level, with
+  a reset), and edges re-route as they move. Edges leave and land on assigned slots
+  along the box edges instead of all meeting at the centre, side-by-side boxes are
+  joined by an arc over the row one way and under it the other — so a mutual import
+  reads as two arcs rather than one line drawn twice — and back-edges are staggered
+  around the right-hand side. Every arrow is now one width and one head size: weight
+  drove stroke width before, which made a heavy edge and a light one different
+  *shapes* and neither legible where they crossed.
+- **Hovering an arrow says what it carries**: import sites, how many are type-only,
+  whether it closes a cycle, and each imported name with what that name is — function,
+  class, type, component, hook, re-export — read off the declaration in the file that
+  exports it (naming convention as the fallback under `--no-sources`). Clicking an
+  arrow lists every site; `edge labels` puts a short form on the line itself.
+- **Cycle focus in the viewer.** The header's cycle count is a button: it dims
+  everything outside the loops, numbers the ring in order on the boxes, and lists
+  each cycle as modules-in-sequence plus the `file:line` imports that close it,
+  each one a click away from the import statement to delete. Loops are ranked so
+  the shortest ring inside a large tangle is what you see — a 20-module component
+  is unreadable, the 3-hop loop inside it is the thing to break. Where the loop is
+  between folders and no single file ring exists (`a/x → b/y`, `b/z → a/w`), it
+  says so and shows the import closing each hop. Arrowheads no longer scale with
+  edge weight, and in-graph badges (`cyc`, `hub`, `uncalled`) render filled
+  instead of blank — `.node rect` was overriding their colour.
 - **Coupling is grouped by workspace package** when the repo has them, top-level
   directory otherwise. `ExportInfo` and `LanguagePatterns.extract_exports` are
   new, implemented for both languages (Python infers surface from `__all__`,
@@ -68,6 +91,11 @@ one repo). Every number below is from that run.
 
 ### Fixed
 
+- **Python files reported an empty public surface.** Without `__all__`, the export
+  list is every top-level definition, but the "is this nested?" check compared two
+  *wrappers* around the same syntax node with `is` — never true, so every class and
+  function was treated as nested and dropped. Exports, unused-symbol detection and
+  the viewer's symbol panel were empty for every plain Python module.
 - **Per-package tsconfig aliases.** Only the source root's `tsconfig.json` was
   read, so in a monorepo where each app aliases `@/*` to its own `src`, every
   app's aliases resolved through one config — mapping imports onto another app's

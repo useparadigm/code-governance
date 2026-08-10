@@ -91,7 +91,11 @@ class PythonPatterns:
 
         for kind in ("class_definition", "function_definition"):
             for node in root.find_all(kind=kind):
-                if node.parent() is not root:
+                parent = node.parent()
+                # `is not root` compared two *wrappers* around the same node, which is
+                # never the same object — so every top-level class and function was
+                # skipped and Python files reported an empty public surface
+                if parent is None or parent.kind() != "module":
                     continue  # nested def/class is not module surface
                 name = node.field("name")
                 if name and not name.text().startswith("_"):

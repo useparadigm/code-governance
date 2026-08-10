@@ -9,3 +9,4 @@ build/
 .pytest_cache/
 .governance-baseline.json
 .DS_Store
+.gstack/
