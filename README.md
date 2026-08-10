@@ -272,6 +272,45 @@ governance-ast --format html > report.html
 
 Self-contained dependency matrix with module metrics. Drop any governance JSON into it.
 
+## Dependency drill-down
+
+```bash
+governance-ast --graph .                        # findings report on stdout
+governance-ast --graph . --graph-out .reports   # findings.md + graph.html
+governance-ast --graph . --format json          # the raw payload
+```
+
+Zero-config, no `governance.toml`. The rules answer *does this repo break its
+contract*; this answers *what does this repo actually look like* — every file,
+every resolved import, explorable at any directory depth.
+
+`findings.md` reports:
+
+- **file-level import cycles**, judged on runtime edges — `import type` and
+  `if TYPE_CHECKING:` are erased before the program runs and are listed apart
+- **folder cycles at every nesting depth** — a repo can be clean at the module
+  granularity its config declares and still have `lib/a` and `lib/b` importing
+  each other three levels down
+- fan-in, fan-out, biggest files, longest dependency chain
+- **dead code vs test-only helpers** — test files are scanned separately, so a
+  helper only the suite imports is reported as such rather than as dead
+- coupling per workspace package (Ce / Ca / instability)
+
+`graph.html` is a self-contained viewer: drill into any folder, click a file to
+read its source with import lines linked, trace a symbol to every call site
+through the barrels that re-export it.
+
+Entry points — framework routes, `package.json` `exports` targets, configs —
+are detected from the markers actually present (Next.js, Expo, Vite, Python
+packaging) so they are not reported as dead code. Extend with `--entry`:
+
+```bash
+governance-ast --graph . --entry 'generated/**' --entry '**/fixtures/*'
+```
+
+Pass `--no-sources` to drop the embedded source text — much smaller output, no
+code view.
+
 ## Comparison
 
 | | code-governance | tach | import-linter |

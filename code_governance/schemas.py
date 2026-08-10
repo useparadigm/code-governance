@@ -102,6 +102,21 @@ class ImportInfo:
 
 
 @dataclass
+class ExportInfo:
+    """One name this file makes available to importers.
+
+    ``source`` is set when the name is re-exported from somewhere else
+    (`export { x } from "./y"`, `from .y import x` in an `__init__.py`), which is
+    what lets the graph walk barrels back to the file that actually declares the
+    symbol. ``name`` is the *public* name — the alias an importer writes.
+    ``"*"`` means a star re-export, ``"default"`` a default export.
+    """
+    name: str
+    line: int = 0
+    source: Optional[str] = None
+
+
+@dataclass
 class EdgeDetail:
     source_file: str
     source_module: str

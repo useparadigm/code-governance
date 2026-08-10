@@ -7,7 +7,7 @@ from ast_grep_py import SgNode
 
 from code_governance.languages.python import PythonPatterns
 from code_governance.languages.typescript import TypeScriptPatterns
-from code_governance.schemas import FileExtractionResult, Language
+from code_governance.schemas import ExportInfo, FileExtractionResult, Language
 
 if TYPE_CHECKING:
     from code_governance.schemas import GovernanceConfig
@@ -20,6 +20,10 @@ class LanguagePatterns(Protocol):
     test_file_patterns: list[tuple[str, str]]
 
     def extract(self, root: SgNode, file_path: str) -> FileExtractionResult: ...
+
+    # Only the graph export needs this, and it costs an extra AST walk, so it is
+    # kept off the main extract() path rather than folded into it.
+    def extract_exports(self, root: SgNode, file_path: str) -> list[ExportInfo]: ...
 
     def file_to_importable(self, file_path: str) -> Optional[str]: ...
 

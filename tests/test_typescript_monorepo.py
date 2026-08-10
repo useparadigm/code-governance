@@ -6,8 +6,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from code_governance.config import load_config
+from code_governance.dep_graph import build_dependency_graph
 from code_governance.engine import discover_dependencies
 from code_governance.extractor import extract_directory, extract_file
+from code_governance.languages import get_patterns
 from code_governance.languages.typescript import TypeScriptPatterns, discover_workspace_packages
 from code_governance.schemas import Language
 
@@ -91,6 +94,56 @@ def test_tsconfig_is_found_at_the_source_root(tmp_path):
 
     report = discover_dependencies(cfg)
     assert {t.target for t in report.dependencies.get("api", [])} == {"core"}
+
+
+def test_each_package_resolves_its_own_alias(tmp_path):
+    """Two apps, both aliasing `@/*` to their own `src`. Resolving every alias
+    through the root tsconfig maps one app's imports onto the other app's files —
+    the config that applies is the nearest one above the importing file."""
+    _write(tmp_path / "tsconfig.json", json.dumps({"compilerOptions": {"paths": {"@/*": ["./shared/*"]}}}))
+    for app in ("web", "mobile"):
+        _write(tmp_path / f"apps/{app}/tsconfig.json",
+               json.dumps({"compilerOptions": {"paths": {"@/*": ["./src/*"]}}}))
+        _write(tmp_path / f"apps/{app}/src/entry.ts",
+               'import { helper } from "@/lib/helper";\nexport const entry = helper;\n')
+        _write(tmp_path / f"apps/{app}/src/lib/helper.ts", "export const helper = 1;\n")
+    _write(tmp_path / "governance.toml", (
+        '[governance]\nroot = "."\nlanguage = "typescript"\n\n'
+        '[[modules]]\nname = "web"\npath = "apps/web/"\n\n'
+        '[[modules]]\nname = "mobile"\npath = "apps/mobile/"\n'
+    ))
+
+    config = load_config(tmp_path / "governance.toml")
+    config.rules.no_file_cycles = True  # populates the file -> file graph
+    patterns = get_patterns(config.language, repo_root=tmp_path, config=config)
+    extractions = extract_directory(tmp_path, config.language, True, patterns=patterns)
+    graph = build_dependency_graph(extractions, config, patterns=patterns)
+    edges = {(s, t) for s, targets in graph.file_edges.items() for t in targets}
+
+    for app in ("web", "mobile"):
+        assert (f"apps/{app}/src/entry.ts", f"apps/{app}/src/lib/helper.ts") in edges
+    # the same specifier must not reach across the app boundary
+    assert ("apps/web/src/entry.ts", "apps/mobile/src/lib/helper.ts") not in edges
+
+    report = discover_dependencies(tmp_path / "governance.toml")
+    assert report.dependencies.get("web", []) == []
+    assert report.dependencies.get("mobile", []) == []
+
+
+def test_nested_tsconfig_without_paths_falls_back_to_the_root(tmp_path):
+    """A package tsconfig that only sets `strict` must not shadow the root aliases."""
+    _write(tmp_path / "tsconfig.json", json.dumps({"compilerOptions": {"paths": {"@/*": ["./src/*"]}}}))
+    _write(tmp_path / "apps/web/tsconfig.json", json.dumps({"compilerOptions": {"strict": True}}))
+    _write(tmp_path / "apps/web/handler.ts", 'import { db } from "@/core/db";\nexport const h = db;\n')
+    _write(tmp_path / "src/core/db.ts", "export const db = 1;\n")
+    _write(tmp_path / "governance.toml", (
+        '[governance]\nroot = "."\nlanguage = "typescript"\n\n'
+        '[[modules]]\nname = "web"\npath = "apps/web/"\n\n'
+        '[[modules]]\nname = "core"\npath = "src/core/"\n'
+    ))
+
+    report = discover_dependencies(tmp_path / "governance.toml")
+    assert {t.target for t in report.dependencies.get("web", [])} == {"core"}
 
 
 def test_dynamic_import_is_extracted():

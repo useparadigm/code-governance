@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Optional
 from ast_grep_py import SgNode
 
 from code_governance.languages.tsconfig import TsConfig, load_tsconfig
-from code_governance.schemas import ClassInfo, FileExtractionResult, ImportInfo
+from code_governance.schemas import ClassInfo, ExportInfo, FileExtractionResult, ImportInfo
 
 if TYPE_CHECKING:
     from code_governance.schemas import GovernanceConfig
@@ -127,11 +127,13 @@ class TypeScriptPatterns:
         self._tsconfig: Optional[TsConfig] = None
         self._repo_root: Optional[Path] = None
         self._workspace_packages: list[tuple[str, str, dict]] = []
+        self._scoped_tsconfigs: list[tuple[str, TsConfig]] = []
 
     def initialize(self, repo_root: Path, config: "GovernanceConfig") -> None:
         self._repo_root = Path(repo_root).resolve()
         self._tsconfig = self._find_tsconfig(self._repo_root)
         self._workspace_packages = discover_workspace_packages(self._repo_root)
+        self._scoped_tsconfigs = self._discover_scoped_tsconfigs(self._repo_root)
 
     @staticmethod
     def _find_tsconfig(root: Path) -> Optional[TsConfig]:
@@ -146,6 +148,36 @@ class TypeScriptPatterns:
                 return found
         return None
 
+    @staticmethod
+    def _discover_scoped_tsconfigs(root: Path) -> list[tuple[str, TsConfig]]:
+        """Every nested tsconfig, deepest first.
+
+        In a monorepo each app and package declares its own `@/*`, all pointing at
+        different directories. Resolving every alias through the root config maps
+        `@/lib/x` in one app onto another app's file, or onto nothing — so the
+        config that applies is the nearest one above the *importing* file, which is
+        also how tsc itself resolves.
+        """
+        found: list[tuple[str, TsConfig]] = []
+        seen: set[Path] = set()
+        for depth in ("*", "*/*", "*/*/*"):
+            for path in sorted(root.glob(f"{depth}/tsconfig.json")):
+                config_dir = path.parent
+                if config_dir in seen or _should_skip_dir(config_dir, root):
+                    continue
+                seen.add(config_dir)
+                loaded = load_tsconfig(config_dir, "tsconfig.json")
+                if loaded is not None and loaded.paths:
+                    found.append((config_dir.relative_to(root).as_posix(), loaded))
+        found.sort(key=lambda item: (-item[0].count("/"), item[0]))
+        return found
+
+    def _tsconfig_for(self, importing_file: str) -> Optional[TsConfig]:
+        for rel_dir, cfg in self._scoped_tsconfigs:
+            if importing_file == rel_dir or importing_file.startswith(rel_dir + "/"):
+                return cfg
+        return self._tsconfig
+
     def extract(self, root: SgNode, file_path: str) -> FileExtractionResult:
         imports = self._extract_imports(root)
         classes = self._extract_classes(root)
@@ -156,6 +188,41 @@ class TypeScriptPatterns:
             classes=classes,
             symbols=symbols,
         )
+
+    def extract_exports(self, root: SgNode, file_path: str) -> list[ExportInfo]:
+        """Every name this file exports, in source order.
+
+        `export { a as b }` records `b` — the public name, which is what an
+        importer writes and therefore the only name the two ends can be matched
+        on. A re-export keeps its `from "./x"` specifier so barrels can be walked
+        back to the declaring file.
+        """
+        out: list[ExportInfo] = []
+        seen: set[str] = set()
+
+        def add(name: str, line: int, source: Optional[str] = None) -> None:
+            if name in seen:
+                return
+            seen.add(name)
+            out.append(ExportInfo(name=name, line=line, source=source))
+
+        for node in root.find_all(kind="export_statement"):
+            line = node.range().start.line + 1
+            if node.text()[:20].startswith("export default"):
+                add("default", line)
+                continue
+            source = _export_source(node)
+            if source is not None and any(
+                c.kind() == "namespace_export" or c.text() == "*" for c in node.children()
+            ):
+                # `export * from "./x"` exports names this file never spells out;
+                # recorded unnamed so the barrel walk can follow it.
+                out.append(ExportInfo(name="*", line=line, source=source))
+                continue
+            for child in node.children():
+                for name in _exported_declaration_names(child):
+                    add(name, line, source)
+        return out
 
     def file_to_importable(self, file_path: str) -> Optional[str]:
         p = PurePosixPath(file_path)
@@ -184,7 +251,8 @@ class TypeScriptPatterns:
     ) -> list[str]:
         out: list[str] = []
 
-        alias_targets = self._apply_alias(import_source)
+        tsconfig = self._tsconfig_for(importing_file)
+        alias_targets = self._apply_alias(import_source, tsconfig)
         workspace_targets = self._apply_workspace(import_source)
         if alias_targets:
             out.extend(alias_targets)
@@ -197,9 +265,9 @@ class TypeScriptPatterns:
         elif import_source.startswith("/"):
             out.append(import_source.lstrip("/"))
         else:
-            has_base_url = bool(self._tsconfig and self._tsconfig.base_url)
+            has_base_url = bool(tsconfig and tsconfig.base_url)
             if has_base_url:
-                out.append(self._from_base_url(import_source))
+                out.append(self._from_base_url(import_source, tsconfig))
             # Implicit base-URL fallback: many codebases import local modules with
             # bare specifiers (`scenes/urls`, `lib/api`) or a src-root alias
             # (`~/types`, `@/queries`) backed by tsconfig `baseUrl`/`paths`. When no
@@ -257,39 +325,39 @@ class TypeScriptPatterns:
             return [f"{pkg_dir}/{c.lstrip('./')}".strip("/") for c in candidates]
         return []
 
-    def _apply_alias(self, import_source: str) -> list[str]:
-        if not self._tsconfig or not self._tsconfig.paths:
+    def _apply_alias(self, import_source: str, tsconfig: Optional[TsConfig]) -> list[str]:
+        if not tsconfig or not tsconfig.paths:
             return []
         results: list[str] = []
-        for pattern, targets in self._tsconfig.paths.items():
+        for pattern, targets in tsconfig.paths.items():
             if "*" in pattern:
                 prefix, _, suffix = pattern.partition("*")
                 if import_source.startswith(prefix) and import_source.endswith(suffix):
                     matched = import_source[len(prefix): len(import_source) - len(suffix)] if suffix else import_source[len(prefix):]
                     for target in targets:
                         replaced = target.replace("*", matched)
-                        results.append(self._normalize_to_repo_relative(replaced))
+                        results.append(self._normalize_to_repo_relative(replaced, tsconfig))
             elif import_source == pattern:
                 for target in targets:
-                    results.append(self._normalize_to_repo_relative(target))
+                    results.append(self._normalize_to_repo_relative(target, tsconfig))
         return results
 
-    def _normalize_to_repo_relative(self, target: str) -> str:
-        if self._tsconfig is None or self._repo_root is None:
+    def _normalize_to_repo_relative(self, target: str, tsconfig: Optional[TsConfig]) -> str:
+        if tsconfig is None or self._repo_root is None:
             return target.lstrip("./")
-        base = self._tsconfig.config_dir
-        if self._tsconfig.base_url:
-            base = (base / self._tsconfig.base_url).resolve()
+        base = tsconfig.config_dir
+        if tsconfig.base_url:
+            base = (base / tsconfig.base_url).resolve()
         absolute = (base / target).resolve()
         try:
             return str(absolute.relative_to(self._repo_root)).replace("\\", "/")
         except ValueError:
             return str(absolute).replace("\\", "/")
 
-    def _from_base_url(self, import_source: str) -> str:
-        if self._tsconfig is None or self._repo_root is None or not self._tsconfig.base_url:
+    def _from_base_url(self, import_source: str, tsconfig: Optional[TsConfig]) -> str:
+        if tsconfig is None or self._repo_root is None or not tsconfig.base_url:
             return import_source
-        base = (self._tsconfig.config_dir / self._tsconfig.base_url).resolve()
+        base = (tsconfig.config_dir / tsconfig.base_url).resolve()
         absolute = (base / import_source).resolve()
         try:
             return str(absolute.relative_to(self._repo_root)).replace("\\", "/")
@@ -445,6 +513,53 @@ class TypeScriptPatterns:
                     if name_node and name_node.kind() == "identifier":
                         symbols.append(name_node.text())
         return symbols
+
+
+_SKIP_DIR_PARTS = frozenset({"node_modules", "dist", "build", "coverage"})
+
+
+def _should_skip_dir(path: Path, root: Path) -> bool:
+    """Dependency and build trees ship their own tsconfigs; those aliases describe
+    someone else's source layout, not this repo's."""
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        return True
+    return any(p in _SKIP_DIR_PARTS or p.startswith(".") for p in parts)
+
+
+_EXPORT_DECL_KINDS = {
+    "function_declaration", "generator_function_declaration", "class_declaration",
+    "abstract_class_declaration", "interface_declaration", "type_alias_declaration",
+    "enum_declaration",
+}
+
+
+def _exported_declaration_names(child: SgNode) -> list[str]:
+    """Public names contributed by one child of an `export_statement`."""
+    kind = child.kind()
+    if kind == "export_clause":
+        names = []
+        for spec in child.children():
+            if spec.kind() != "export_specifier":
+                continue
+            field = spec.field("alias") or spec.field("name")
+            if field:
+                names.append(field.text())
+        return names
+    if kind in _EXPORT_DECL_KINDS:
+        field = child.field("name")
+        return [field.text()] if field else []
+    if kind in ("lexical_declaration", "variable_declaration"):
+        names = []
+        for decl in child.children():
+            if decl.kind() != "variable_declarator":
+                continue
+            field = decl.field("name")
+            if field and field.kind() == "identifier":
+                names.append(field.text())
+        return names
+    return []
 
 
 _TYPE_CONTEXT_KINDS = {

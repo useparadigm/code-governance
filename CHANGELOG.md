@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+### File-level dependency graph (`--graph`)
+
+A drill-down view of the import graph, built from the same extractors and the
+same import resolution the rules use, so its numbers agree with `--auto` by
+construction. Started life as a one-off script pointed at one monorepo; this is
+that analysis with every repo-specific assumption replaced by detection.
+
+- **`--graph PATH`** emits a findings report (`--format text`), the raw payload
+  (`--format json`) or a self-contained viewer (`--format html`);
+  `--graph-out DIR` writes `findings.md` + `graph.html` together.
+- **Folder cycles at every nesting depth.** `no_cycles` only sees the module
+  granularity a config declares, so a cycle between two sibling subfolders three
+  levels down is invisible to it. Reported per level, with the import-site count.
+- **Cycles are judged on runtime edges.** Type-only imports are listed separately
+  instead of being counted as loops — the rule `no_file_cycles` already worked
+  this way, and now the reports agree with it.
+- **Dead code vs test-only helpers.** Test files are scanned in a second pass:
+  they are not graph nodes, but what they import is what separates genuinely
+  unreferenced code from a helper only the suite uses.
+- **Entry-point detection replaces per-repo path lists.** Framework routes
+  (Next.js, Expo Router, Vite), configs, ambient declarations, and every file a
+  workspace package names in its `exports` map are treated as run-not-imported.
+  Which conventions fired is printed in the report. `--entry GLOB` extends it.
+- **Symbol-level attribution through barrels.** `export { x } from "./y"` and
+  `export * from "./y"` chains are walked so usage lands on the file that
+  declares the symbol — otherwise every barrelled module reads as unused.
+- **Coupling is grouped by workspace package** when the repo has them, top-level
+  directory otherwise. `ExportInfo` and `LanguagePatterns.extract_exports` are
+  new, implemented for both languages (Python infers surface from `__all__`,
+  top-level definitions, and relative re-exports).
+
+### Fixed
+
+- **Per-package tsconfig aliases.** Only the source root's `tsconfig.json` was
+  read, so in a monorepo where each app aliases `@/*` to its own `src`, every
+  app's aliases resolved through one config — mapping imports onto another app's
+  files or onto nothing. On a two-app Next.js + Expo repo this dropped ~70% of
+  edges (1390 resolved, vs 4633 with the nearest-ancestor config). The tsconfig
+  that applies is now the nearest one above the importing file, as `tsc` does.
+- **JS/TS build output is skipped when scanning.** `.next`, `.turbo`, `.expo`,
+  `.vercel`, `.nuxt`, `.svelte-kit`, `.output`, `.parcel-cache`, `coverage` and
+  `storybook-static` hold generated code that mirrors real source, so scanning
+  them double-counted every file they shadow.
+
 ### TypeScript monorepo accuracy
 
 Found by running the engine against a Next.js + Expo + npm-workspaces monorepo
