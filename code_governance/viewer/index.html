@@ -39,6 +39,11 @@
 body { font-family: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace; font-size: 13px; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
 .header { padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--bg-panel); display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .header .stat { display: flex; align-items: center; gap: 4px; }
+.header .stat-icon { display: inline-flex; color: var(--text-muted); }
+/* one 16x16 stroke set, drawn in currentColor so it takes the colour of its context */
+.ic { width: 1.05em; height: 1.05em; display: inline-block; vertical-align: -.16em; flex: none;
+      fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.detail-section h3 .ic, .tab-btn .ic { vertical-align: -.14em; }
 .header .stat-label { color: var(--text-muted); }
 .header .stat-value { font-weight: 600; }
 .header .stat-value.has-violations { color: var(--red); }
@@ -124,6 +129,23 @@ body { font-family: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace
 <body>
 <script>
 const REPORT_DATA = "__REPORT_DATA__";
+
+/* 16x16 stroke icons, currentColor — no emoji, so the report reads the same on
+   every platform and prints in one colour. */
+const ICONS = {
+  code: '<path d="M5.8 4.8 2.6 8l3.2 3.2M10.2 4.8 13.4 8l-3.2 3.2"/>',
+  blocks: '<rect x="2.7" y="2.7" width="4.5" height="4.5" rx="1"/><rect x="8.8" y="2.7" width="4.5" height="4.5" rx="1"/><rect x="2.7" y="8.8" width="4.5" height="4.5" rx="1"/><rect x="8.8" y="8.8" width="4.5" height="4.5" rx="1"/>',
+  file: '<path d="M9.2 2.5H4.6a1.4 1.4 0 0 0-1.4 1.4v8.2a1.4 1.4 0 0 0 1.4 1.4h6.8a1.4 1.4 0 0 0 1.4-1.4V5.9z"/><path d="M9.2 2.5v3.4h3.6"/>',
+  grid: '<rect x="2.7" y="2.7" width="10.6" height="10.6" rx="1.2"/><path d="M2.7 6.2h10.6M2.7 9.8h10.6M6.2 2.7v10.6M9.8 2.7v10.6"/>',
+  in: '<path d="M4.3 4.3 11.7 11.7M11.7 7.5v4.2H7.5"/>',
+  out: '<path d="M4.3 11.7 11.7 4.3M7.5 4.3h4.2v4.2"/>',
+  warn: '<path d="M8 2.9 13.9 12.5H2.1z"/><path d="M8 6.6v3"/><circle cx="8" cy="11.3" r=".55" fill="currentColor" stroke="none"/>',
+  ok: '<circle cx="8" cy="8" r="5.3"/><path d="m5.5 8.2 1.8 1.8 3.4-4"/>',
+};
+
+function icon(name) {
+  return `<svg class="ic" viewBox="0 0 16 16" aria-hidden="true">${ICONS[name] || ""}</svg>`;
+}
 
 let data = null;
 let selectedModule = null;
@@ -250,14 +272,14 @@ function render() {
   }
   document.body.innerHTML = `
     <div class="header">
-      <div class="stat"><span class="stat-label">language:</span><span class="stat-value">${esc(data.language || "")}</span></div>
-      <div class="stat"><span class="stat-label">modules:</span><span class="stat-value">${data.module_count || 0}</span></div>
-      <div class="stat"><span class="stat-label">files:</span><span class="stat-value">${data.total_files_scanned || 0}</span></div>
-      <div class="stat"><span class="stat-label">violations:</span><span class="stat-value ${violationCount ? "has-violations" : ""}">${violationCount}</span></div>
+      <div class="stat"><span class="stat-icon">${icon("code")}</span><span class="stat-label">language:</span><span class="stat-value">${esc(data.language || "")}</span></div>
+      <div class="stat"><span class="stat-icon">${icon("blocks")}</span><span class="stat-label">modules:</span><span class="stat-value">${data.module_count || 0}</span></div>
+      <div class="stat"><span class="stat-icon">${icon("file")}</span><span class="stat-label">files:</span><span class="stat-value">${data.total_files_scanned || 0}</span></div>
+      <div class="stat"><span class="stat-icon">${icon(violationCount ? "warn" : "ok")}</span><span class="stat-label">violations:</span><span class="stat-value ${violationCount ? "has-violations" : ""}">${violationCount}</span></div>
     </div>
     <div class="tab-bar">
-      <button class="tab-btn ${currentView === "matrix" ? "active" : ""}" onclick="switchView('matrix')">Matrix</button>
-      <button class="tab-btn ${currentView === "modules" ? "active" : ""}" onclick="switchView('modules')">Modules</button>
+      <button class="tab-btn ${currentView === "matrix" ? "active" : ""}" onclick="switchView('matrix')">${icon("grid")} Matrix</button>
+      <button class="tab-btn ${currentView === "modules" ? "active" : ""}" onclick="switchView('modules')">${icon("blocks")} Modules</button>
     </div>
     <div class="main">${mainContent}</div>
   `;
@@ -480,7 +502,7 @@ function renderDetail(modName) {
     html += `</div></div>`;
   }
 
-  html += `<div class="detail-section"><h3>Depends on (${deps.length})</h3>`;
+  html += `<div class="detail-section"><h3>${icon("out")} Depends on (${deps.length})</h3>`;
   if (deps.length === 0) {
     html += `<div class="empty-state">No outgoing dependencies</div>`;
   } else {
@@ -506,7 +528,7 @@ function renderDetail(modName) {
   }
   html += `</div>`;
 
-  html += `<div class="detail-section"><h3>Depended on by (${revDeps.length})</h3>`;
+  html += `<div class="detail-section"><h3>${icon("in")} Depended on by (${revDeps.length})</h3>`;
   if (revDeps.length === 0) {
     html += `<div class="empty-state">No incoming dependencies</div>`;
   } else {
@@ -532,7 +554,7 @@ function renderDetail(modName) {
   }
   html += `</div>`;
 
-  html += `<div class="detail-section"><h3>Violations (${violations.length})</h3>`;
+  html += `<div class="detail-section"><h3>${icon(violations.length ? "warn" : "ok")} Violations (${violations.length})</h3>`;
   if (violations.length === 0) {
     html += `<div class="empty-state">No violations</div>`;
   } else {
