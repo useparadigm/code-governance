@@ -258,6 +258,13 @@ def render_markdown(payload: dict, *, viewer: Optional[str] = "graph.html", titl
     add(f"# {title or payload.get('root', 'Dependency')} — dependency findings\n")
     add(f"{g.n} source files · {len(payload['edges'])} file→file edges · "
         f"{sum(g.weight.values())} import sites · {sum(g.lines):,} lines\n")
+    sites = g.stats.get("import_sites", 0)
+    resolved = g.stats.get("resolved_sites", 0)
+    if sites:
+        add(f"{100 * resolved / sites:.0f}% of {sites} import sites resolved to a file in "
+            "this tree; the rest are third-party. A number far below that of a "
+            "comparable repo means aliases are not being read, and every count below "
+            "is an undercount.\n")
     if viewer:
         add(f"Links open `{viewer}` at that file or level.\n")
 
@@ -362,6 +369,12 @@ def summary_line(payload: dict) -> str:
     fcycles = file_cycles(g)
     lcycles = folder_cycles(g, g.value_weight)
     dead, test_only = orphans(g)
+    # The resolve rate is the report's own smoke alarm: a misconfigured alias or
+    # an unread tsconfig shows up here as a collapsed percentage long before
+    # anyone notices that a central file claims five importers.
+    sites = g.stats.get("import_sites", 0)
+    resolved = g.stats.get("resolved_sites", 0)
+    rate = f" resolved={100 * resolved / sites:.0f}%-of-{sites}-sites" if sites else ""
     return (f"files={g.n} edges={len(payload['edges'])} "
             f"file-cycles={len(fcycles)} folder-cycles={len(lcycles)} "
-            f"dead={len(dead)} test-only={len(test_only)}")
+            f"dead={len(dead)} test-only={len(test_only)}{rate}")

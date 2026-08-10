@@ -56,6 +56,39 @@ that analysis with every repo-specific assumption replaced by detection.
   new, implemented for both languages (Python infers surface from `__all__`,
   top-level definitions, and relative re-exports).
 
+### Accuracy on a large Django + React monorepo
+
+Found by running `--graph` against PostHog (6988 Python files, 6915 TypeScript,
+one repo). Every number below is from that run.
+
+- **`extends` no longer re-anchors an inherited `baseUrl`.** `frontend/tsconfig.json`
+  holding nothing but `{"extends": "../tsconfig.json"}` made the parent's
+  `baseUrl: "frontend/"` resolve under the *child's* directory, so every
+  `lib/*`, `scenes/*` and `~/*` target pointed at `frontend/frontend/`. Aliases
+  resolved at 0%; `src/types.ts` reported 5 importers against a real 1518. Both
+  `baseUrl` and `paths` are now anchored to the config that declares them, as
+  `tsc` does. Frontend edges: 5069 → 21618.
+- **`from pkg import sub as alias` keeps its name.** The Python extractor read
+  plain names but skipped `aliased_import` nodes, so the name that distinguishes
+  a submodule from a symbol was lost and the edge landed on the package
+  `__init__.py` — leaving the submodule with no importers and a place in the
+  dead list.
+- **Django entry points.** Gated on `manage.py`: `apps.py`, `urls.py`, `admin.py`,
+  `**/management/commands/*.py` and `**/templatetags/*.py` are reached by string
+  (`ROOT_URLCONF`, `INSTALLED_APPS`) or by autodiscovery, never by import. Without
+  them 124 of PostHog's 148 management commands were reported as dead code. Dead
+  list: 337 → 161. `EntryRule` takes whole-path `globs` for conventions a single
+  path segment cannot express.
+- **Asset specifiers are not module edges.** `import './Spinner.scss'` had its
+  extension stripped and fell back to the directory index, resolving onto the
+  sibling barrel — which re-exports the importer, inventing a two-file cycle.
+  `.scss`, `.css`, images, fonts, media and `.json` now resolve to nothing.
+  Frontend file cycles: 28 → 17.
+- **The resolve rate is reported.** It was computed into `stats` and never shown.
+  `summary_line` and the findings header now print it, because a collapsed
+  percentage is what distinguishes "this repo has few dependencies" from "the
+  aliases are not being read" — the failure that hid the tsconfig bug above.
+
 ### Fixed
 
 - **Python files reported an empty public surface.** Without `__all__`, the export

@@ -70,6 +70,18 @@ def test_bare_specifier_returns_none(tmp_path):
     assert p.resolve_import("@scope/pkg", "src/api/routes.ts", cfg, _importable_map(), {}) is None
 
 
+def test_asset_import_does_not_resolve_to_the_sibling_barrel(tmp_path):
+    """`import './Spinner.scss'` from `Spinner/Spinner.tsx` must not land on
+    `Spinner/index.ts` — that barrel re-exports the importer, inventing a cycle."""
+    p = _make_patterns(tmp_path)
+    cfg = GovernanceConfig(language=Language.TYPESCRIPT)
+    assert p.resolve_import("./index.scss", "src/core/models.ts", cfg, _importable_map(), {}) is None
+    assert p.resolve_import("../db/repository.css", "src/core/service.ts", cfg, _importable_map(), {}) is None
+    assert p.resolve_import("./logo.svg", "src/core/service.ts", cfg, _importable_map(), {}) is None
+    # a real module with a dot in its name still resolves
+    assert p.resolve_import("../db/repository", "src/core/service.ts", cfg, _importable_map(), {}) == "db"
+
+
 def test_missing_file_returns_none(tmp_path):
     p = _make_patterns(tmp_path)
     cfg = GovernanceConfig(language=Language.TYPESCRIPT)

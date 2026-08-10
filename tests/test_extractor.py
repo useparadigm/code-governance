@@ -19,6 +19,22 @@ def test_extract_from_import_names():
     assert names == {"User", "Project"}
 
 
+def test_extract_from_import_keeps_the_name_behind_an_alias():
+    """`from pkg import sub as alias` — the name decides submodule vs symbol, so
+    dropping it sends the edge to the package `__init__.py` instead."""
+    source = "from posthog.api.file_system import registrations as fs_registrations\n"
+    result = extract_file("posthog/apps.py", source, Language.PYTHON)
+    assert len(result.imports) == 1
+    assert result.imports[0].source_module == "posthog.api.file_system"
+    assert result.imports[0].imported_name == "registrations"
+
+
+def test_extract_from_import_mixes_plain_and_aliased_names():
+    source = "from core.models import User, Project as Proj\n"
+    result = extract_file("api/routes.py", source, Language.PYTHON)
+    assert {imp.imported_name for imp in result.imports} == {"User", "Project"}
+
+
 def test_extract_classes():
     source = "class MyModel:\n    pass\n\nclass ChildModel(MyModel):\n    pass\n"
     result = extract_file("core/models.py", source, Language.PYTHON)

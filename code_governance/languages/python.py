@@ -253,6 +253,12 @@ class PythonPatterns:
                         mod_node = child
                     else:
                         names.append(child.text())
+                elif child.kind() == "aliased_import":
+                    # `from pkg import sub as alias` — the imported name is what
+                    # decides whether this is a symbol or a submodule, so losing it
+                    # to the alias sends the edge to the package `__init__.py` and
+                    # makes the submodule look unimported.
+                    names.append(child.text().split(" as ")[0].strip())
                 elif child.kind() == "wildcard_import":
                     names.append("*")
 
