@@ -26,7 +26,7 @@ def run_governance(config_path: str | Path, *, config: GovernanceConfig | None =
     if not source_root.exists():
         raise FileNotFoundError(f"Source root not found: {source_root}")
 
-    patterns = get_patterns(config.language, repo_root=repo_root, config=config)
+    patterns = get_patterns(config.language, repo_root=source_root, config=config)
     extractions = extract_directory(source_root, config.language, config.rules.exclude_test_files, patterns=patterns)
 
     graph = build_dependency_graph(extractions, config, patterns=patterns)
@@ -72,7 +72,7 @@ def run_governance_diff(config_path: str | Path, git_ref: str = "HEAD", *, confi
             rel = line[len(root_prefix):]
             changed_files.add(rel)
 
-    patterns = get_patterns(config.language, repo_root=repo_root, config=config)
+    patterns = get_patterns(config.language, repo_root=source_root, config=config)
     all_extractions = extract_directory(source_root, config.language, config.rules.exclude_test_files, patterns=patterns)
 
     changed_extractions = [e for e in all_extractions if e.file_path in changed_files]
@@ -129,7 +129,7 @@ def discover_dependencies(config_path: str | Path) -> DiscoverReport:
     if not source_root.exists():
         raise FileNotFoundError(f"Source root not found: {source_root}")
 
-    patterns = get_patterns(config.language, repo_root=repo_root, config=config)
+    patterns = get_patterns(config.language, repo_root=source_root, config=config)
     extractions = extract_directory(source_root, config.language, config.rules.exclude_test_files, patterns=patterns)
     graph = build_dependency_graph(extractions, config, patterns=patterns)
     metrics = compute_module_metrics(graph, config)

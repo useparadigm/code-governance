@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### TypeScript monorepo accuracy
+
+Found by running the engine against a Next.js + Expo + npm-workspaces monorepo
+(2110 files): every cross-package edge was missing and the run still exited
+`PASSED`.
+
+- **npm/yarn/pnpm workspace packages resolve.** `import { x } from "@acme/ui"`
+  looked like a third-party specifier, so *all* cross-package edges were dropped —
+  a monorepo reported every module with `out=0` and no cycles. Workspace globs are
+  read from the nearest enclosing `package.json`, and subpath imports
+  (`@acme/ui/button`) resolve through the package's `exports` map, including
+  conditional and wildcard entries, with `main` and `src/` layout fallbacks.
+- **tsconfig is discovered from the source root, not the config file's directory.**
+  A `governance.toml` kept outside the code it governs (`root = "../repo"`) found
+  no `tsconfig.json`, so every `@/*` alias silently failed to resolve — zero edges,
+  zero violations, exit 0. Alias targets are also normalized against the source
+  root, which is what importable keys are relative to. Ancestors are searched as a
+  fallback for packages whose aliases live in a root `tsconfig.base.json`.
+- **Dynamic `import()` produces edges.** `await import("./heavy")` was invisible,
+  which made lazily-loaded modules look unreferenced. Type-position forms
+  (`typeof import("x")`, `const x: import("x").T`) are recorded as `type_only`, so
+  they never count toward runtime cycles.
+- **Test-file detection covers `.mjs`/`.cjs`/`.mts`/`.cts`.** Patterns only listed
+  `.ts/.tsx/.js/.jsx`, so `app.config.test.mjs` and similar suites were scanned as
+  production source.
+
 - **File-level cycle detection (`no_file_cycles`).** New rule that detects
   circular imports between individual files — the madge `--circular` equivalent.
   Module-level cycle detection is structurally blind to cycles inside a single
