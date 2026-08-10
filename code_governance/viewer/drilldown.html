@@ -35,6 +35,9 @@ body { font-family: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace
 .stat-label { color: var(--text-muted); }
 .stat-value { font-weight: 600; }
 .stat-value.bad { color: var(--red); }
+.stat.clickable { cursor: pointer; padding: 1px 6px; border-radius: 4px; user-select: none; }
+.stat.clickable:hover { background: var(--bg-hover); }
+.stat.clickable.on { background: color-mix(in srgb, var(--red) 22%, transparent); }
 .spacer { flex: 1; }
 input[type=search] { background: var(--bg); color: var(--text); border: 1px solid var(--border);
                      border-radius: 4px; padding: 3px 8px; font-family: inherit; font-size: 12px; width: 180px; }
@@ -74,10 +77,13 @@ svg { display: block; }
 .node .glyph { font-size: 12px; fill: var(--text-muted); }
 .node .loc-bar { fill: var(--blue); opacity: .5; }
 .node.sel .loc-bar { opacity: .9; }
-.node .badge { opacity: .85; }
+/* `.node rect` would otherwise win on specificity and paint every badge the panel
+   colour — white text on a white pill, which is how they came out blank */
+.node rect.badge { opacity: .85; stroke: none; }
 .node .badge-t { font-size: 9px; fill: #fff; text-anchor: middle; font-weight: 600; }
-.b-red { fill: var(--red); } .b-amber { fill: var(--amber); }
-.b-green { fill: var(--green); } .b-blue { fill: var(--blue); } .b-muted { fill: var(--text-muted); }
+.node rect.b-red, .b-red { fill: var(--red); } .node rect.b-amber, .b-amber { fill: var(--amber); }
+.node rect.b-green, .b-green { fill: var(--green); } .node rect.b-blue, .b-blue { fill: var(--blue); }
+.node rect.b-muted, .b-muted { fill: var(--text-muted); }
 
 /* one colour per kind, used by the glyph in the graph and in every list */
 .k-folder .glyph, .g-folder { fill: var(--blue); color: var(--blue); }
@@ -98,11 +104,62 @@ svg { display: block; }
 .group-label { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-muted);
                margin: 10px 0 3px; display: flex; gap: 5px; align-items: center; }
 .group-label:first-child { margin-top: 2px; }
-.edge { fill: none; stroke: var(--text-muted); opacity: .38; }
-.edge.back { stroke: var(--red); opacity: .75; stroke-dasharray: 4 3; }
-.edge.hi { stroke: var(--blue); opacity: .95; }
-.edge.dim { opacity: .05; }
-.elabel { font-size: 9px; fill: var(--text-muted); }
+/* one width for every edge. weight used to drive stroke-width, so a heavy edge and a
+   light one were different *shapes* and neither was readable where they crossed —
+   the count now lives in the hover card and the optional label instead */
+.edge { fill: none; stroke: var(--text-muted); stroke-width: 1.5; opacity: .55; pointer-events: none; }
+.edge.back { stroke: var(--red); opacity: .8; stroke-dasharray: 4 3; }
+.edge.hi { stroke: var(--blue); opacity: .95; stroke-width: 2; }
+.edge.dim { opacity: .06; }
+.edge.hov { stroke: var(--blue); opacity: 1; stroke-width: 2.6; stroke-dasharray: none; }
+/* an invisible fat twin of every edge: a 1.4px line is impossible to point at */
+.edge-hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
+/* cycle focus: only the loops are drawn, and they crawl in the direction of the import */
+.edge.cyc-on { stroke: var(--red); opacity: .5; stroke-dasharray: 4 3; }
+.edge.cyc-loop { stroke: var(--red); opacity: 1; stroke-width: 2.4; stroke-dasharray: 7 5;
+                 animation: ants 1.1s linear infinite; }
+@keyframes ants { to { stroke-dashoffset: -12; } }
+@media (prefers-reduced-motion: reduce) { .edge.cyc-loop { animation: none; stroke-dasharray: none; } }
+/* a marker does not inherit from the path that references it, so each arrowhead
+   colour needs its own marker rather than currentColor */
+.mk-mute { fill: var(--text-muted); } .mk-red { fill: var(--red); }
+.mk-blue { fill: var(--blue); } .mk-ext { fill: var(--ext); }
+.node.cyc-step rect { stroke: var(--red); stroke-width: 2.4; }
+.step-dot { fill: var(--red); }
+.step-t { font-size: 10px; fill: #fff; text-anchor: middle; font-weight: 700; }
+.cyc-card { border: 1px solid var(--border); border-radius: 6px; padding: 7px 8px; margin-bottom: 8px; cursor: pointer; }
+.cyc-card:hover { background: var(--bg-hover); }
+.cyc-card.sel { border-color: var(--red); background: color-mix(in srgb, var(--red) 7%, transparent); cursor: default; }
+.cyc-card.sel:hover { background: color-mix(in srgb, var(--red) 7%, transparent); }
+.cyc-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; }
+.loop-line { margin: 5px 0 2px; overflow-wrap: anywhere; line-height: 1.6; }
+.loop-line .hop { color: var(--red); font-weight: 600; }
+.arrow { color: var(--text-muted); }
+.chain { border-left: 2px solid var(--red); padding-left: 8px; margin: 3px 0; }
+.chain .step { padding: 2px 4px; border-radius: 3px; cursor: pointer; overflow-wrap: anywhere; font-size: 11px; }
+.chain .step:hover { background: var(--bg-hover); }
+.chain .step .n { color: var(--red); font-weight: 700; }
+.elabel { font-size: 9px; fill: var(--text-muted); text-anchor: middle; pointer-events: none; }
+.elabel-bg { fill: var(--bg); opacity: .8; }
+.elabel.cyc { fill: var(--red); font-weight: 600; }
+
+/* drag: boxes are movable, because no automatic layer layout untangles every graph */
+.node rect { cursor: grab; }
+body.dragging, body.dragging .node rect { cursor: grabbing; }
+body.dragging .edge-hit { pointer-events: none; }
+
+/* hover card for an edge — what the arrow actually carries */
+.tip { position: fixed; z-index: 20; max-width: 380px; pointer-events: none; display: none;
+       background: var(--bg-panel); border: 1px solid var(--border); border-radius: 6px;
+       padding: 7px 9px; font-size: 11px; box-shadow: 0 6px 20px rgba(0,0,0,.28); }
+.tip.on { display: block; }
+.tip-head { font-weight: 600; overflow-wrap: anywhere; }
+.tip-sub { color: var(--text-muted); margin-top: 2px; }
+.tip-sub .red { color: var(--red); }
+.tip-syms { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.tip-sym { background: var(--badge-bg); border-radius: 3px; padding: 1px 5px; }
+.tip-sym .k { color: var(--text-muted); }
+.tip-sym.more { opacity: .7; }
 /* the outside world: dashed, violet, never filled — visibly not part of this level */
 .ghost rect { fill: none; stroke: var(--ext); stroke-width: 1.2; stroke-dasharray: 6 4; rx: 6; cursor: pointer; }
 .ghost:hover rect { fill: color-mix(in srgb, var(--ext) 12%, transparent); }
@@ -168,10 +225,12 @@ table.matrix td.diag { background: var(--bg-hover); }
   <div class="stat"><span class="stat-label">files</span><span class="stat-value" id="s-files">0</span></div>
   <div class="stat"><span class="stat-label">loc</span><span class="stat-value" id="s-loc">0</span></div>
   <div class="stat"><span class="stat-label">edges</span><span class="stat-value" id="s-edges">0</span></div>
-  <div class="stat"><span class="stat-label">cycles</span><span class="stat-value" id="s-cycles">0</span></div>
+  <div class="stat clickable" id="stat-cycles" title="focus the import loops at this level"><span class="stat-label">cycles</span><span class="stat-value" id="s-cycles">0</span></div>
   <span class="toggle on" id="t-view">graph</span>
   <span class="toggle on" id="t-ext">externals</span>
   <span class="toggle" id="t-type">hide type-only</span>
+  <span class="toggle" id="t-labels">edge labels</span>
+  <span class="toggle" id="t-reset" style="display:none">reset layout</span>
   <input type="search" id="search" placeholder="filter nodes…">
 </div>
 <div class="main">
@@ -187,6 +246,7 @@ table.matrix td.diag { background: var(--bg-hover); }
   </div>
   <div class="side" id="side"></div>
 </div>
+<div class="tip" id="tip"></div>
 <div class="legend">
   <span id="glyph-legend"></span>
   <span class="pill red">cyc</span> in a cycle
@@ -196,7 +256,7 @@ table.matrix td.diag { background: var(--bg-hover); }
   <span class="pill red">uncalled</span> nothing imports it and it is not an entrypoint
   · <span style="color:var(--ext)">dashed violet = outside this folder; select a node to trace its outside edges, click a ghost to go there</span> · bar under a node = lines of code
 </div>
-<div class="legend" id="legend">click any node = details in the side panel · click file = open source · double-click folder = drill in · breadcrumb = drill out · red dashed edge = cycle back-edge (type-only imports excluded)</div>
+<div class="legend" id="legend">click any node = details in the side panel · drag a box to untangle the edges · hover an arrow = what it imports, click it = every site · double-click folder = drill in · red dashed edge = cycle back-edge (type-only imports excluded) · click the cycles count = focus the loops</div>
 <script>
 const DATA = __DATA__;
 const SOURCES = __SOURCES__;
@@ -269,6 +329,12 @@ let query = "";
 let expanded = new Set();
 let expandedSymbols = new Set();
 let level = null;
+let cycleView = false;    // cycle focus: report in the side panel, loops lit in the graph
+let cycleSel = null;      // scc id under focus; null = every loop at this level, "auto" = pick the biggest
+let showLabels = false;   // draw what each edge carries, on the edge
+let posOverride = new Map();   // node path -> [x, y], wherever the user dragged it
+let ghostEdges = [];      // rendered outside-world edges, by data-ge index
+let dragState = null, dragMoved = false, suppressClick = false;
 
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -317,9 +383,10 @@ function buildLevel() {
       if (a === b) { order[a].self += w; continue; }
       const key = a + ">" + b;
       let l = links.get(key);
-      if (!l) { l = { s: a, t: b, count: 0, value: 0, sites: [] }; links.set(key, l); }
+      if (!l) { l = { s: a, t: b, count: 0, value: 0, typeOnly: 0, sites: [] }; links.set(key, l); }
       l.count += w;
       l.value += Math.max(0, edgeValueWeight(e));
+      l.typeOnly += Math.min(e[4], w);
       if (l.sites.length < 200) l.sites.push([e[0], e[1], e[3][0] || 0, w]);
       order[a].out += w; order[b].in += w;
     } else if (a !== -1) {
@@ -337,6 +404,7 @@ function buildLevel() {
   order.forEach((n, i) => { n.extOutDetail = extOutDetail[i]; n.extInDetail = extInDetail[i]; });
 
   const linkList = [...links.values()];
+  linkList.forEach((l, i) => { l.i = i; });   // stable handle for the DOM to point at
   const { sccOf, cycleCount } = tarjan(order.length, linkList.filter(l => l.value > 0));
   order.forEach((n, i) => { n.scc = sccOf[i]; });
   const sccSize = {};
@@ -426,6 +494,233 @@ function layerize(nodes, links, sccOf) {
   for (const n of nodes) n.layer = depth(n.scc, new Set());
 }
 
+/* ---------- cycles ----------
+ *  "3 cycles" is a number, not a problem you can act on. What you need is: which
+ *  modules, in what order, and which import statement closes the ring. */
+
+/** One entry per strongly-connected component bigger than a single node. */
+function cycleGroups() {
+  if (!level) return [];
+  const by = new Map();
+  for (const n of level.nodes) {
+    if (!n.inCycle) continue;
+    if (!by.has(n.scc)) by.set(n.scc, []);
+    by.get(n.scc).push(n);
+  }
+  return [...by.entries()]
+    .map(([scc, nodes]) => ({ scc, nodes: nodes.slice().sort(byKindThenSize) }))
+    .sort((a, b) => b.nodes.length - a.nodes.length || a.scc - b.scc);
+}
+
+/** Shortest ring through `start` in an adjacency map, as a node list. BFS, so the
+ *  first ring found is the shortest one — a 30-module SCC is unreadable, the 3-hop
+ *  loop hiding inside it is the thing you actually have to break. */
+function shortestLoopIn(adj, start) {
+  const prev = new Map([[start, -1]]);
+  const q = [start];
+  for (let head = 0; head < q.length; head++) {
+    const v = q[head];
+    for (const w of (adj.get(v) || [])) {
+      if (w === start) {
+        const path = [];
+        for (let c = v; c !== -1; c = prev.get(c)) path.push(c);
+        return path.reverse();
+      }
+      if (prev.has(w)) continue;
+      prev.set(w, v);
+      q.push(w);
+    }
+  }
+  return null;
+}
+
+/** The tightest loop inside one SCC, over this level's own nodes. Memoised on the
+ *  level, which is rebuilt on every navigation anyway. */
+function bestLoop(group) {
+  if (!level._loops) level._loops = new Map();
+  if (level._loops.has(group.scc)) return level._loops.get(group.scc);
+  const loop = computeBestLoop(group);
+  level._loops.set(group.scc, loop);
+  return loop;
+}
+
+function computeBestLoop(group) {
+  const members = new Set(group.nodes.map(n => n.idx));
+  const adj = new Map();
+  for (const l of level.links) {
+    if (l.value <= 0 || !members.has(l.s) || !members.has(l.t)) continue;
+    if (!adj.has(l.s)) adj.set(l.s, []);
+    adj.get(l.s).push(l.t);
+  }
+  let best = null;
+  for (const n of group.nodes) {
+    const p = shortestLoopIn(adj, n.idx);
+    if (p && (!best || p.length < best.length)) best = p;
+    if (best && best.length === 2) break;  // mutual import — nothing is shorter
+  }
+  return best || group.nodes.map(n => n.idx);
+}
+
+const chainCache = new Map();
+
+/** Down to the files. The folder loop says two folders import each other; this says
+ *  which two files, and on which lines. Type-only imports are erased at compile time,
+ *  so they are excluded — they cannot close a runtime loop.
+ *
+ *  A folder loop does not have to contain a file loop: `a/x.ts → b/y.ts` and
+ *  `b/z.ts → a/w.ts` closes the ring between the folders while every file stays
+ *  acyclic. When there is no file ring, `exact` is false and the steps are one
+ *  representative import per hop of the folder loop — still the imports to break. */
+function fileChain(group, loop) {
+  // keyed by identity, not by scc id — scc numbering is rebuilt whenever the level is
+  const key = focus.join("/") + "|" + hideTypeOnly + "|" + group.nodes.map(n => n.name).join(",");
+  if (chainCache.has(key)) return chainCache.get(key);
+  const owned = new Set();
+  for (const n of group.nodes) for (const f of n.files) owned.add(f);
+  const adj = new Map(), lineOf = new Map();
+  for (const e of EDGES) {
+    if (edgeValueWeight(e) <= 0 || e[0] === e[1]) continue;
+    if (!owned.has(e[0]) || !owned.has(e[1])) continue;
+    if (!adj.has(e[0])) adj.set(e[0], []);
+    adj.get(e[0]).push(e[1]);
+    const k = e[0] + ">" + e[1];
+    if (!lineOf.has(k)) lineOf.set(k, (e[3] && e[3][0]) || 1);
+  }
+  let best = null;
+  let tried = 0;
+  for (const f of adj.keys()) {
+    if (++tried > 300) break;   // a shortest ring turns up long before this
+    const p = shortestLoopIn(adj, f);
+    if (p && (!best || p.length < best.length)) best = p;
+    if (best && best.length === 2) break;
+  }
+  const res = best
+    ? { exact: true, steps: best.map((f, i) => {
+        const dst = best[(i + 1) % best.length];
+        return { src: f, dst, line: lineOf.get(f + ">" + dst) || 1 };
+      }) }
+    : { exact: false, steps: hopSites(loop) };
+  chainCache.set(key, res);
+  return res;
+}
+
+/** One concrete import per hop of the node loop — the fallback when no single file
+ *  ring exists. Picks the hop's first recorded site: file, line, and what it pulls in. */
+function hopSites(loop) {
+  const steps = [];
+  for (let i = 0; i < loop.length; i++) {
+    const s = loop[i], t = loop[(i + 1) % loop.length];
+    const l = level.links.find(x => x.s === s && x.t === t);
+    const site = l && l.sites[0];
+    if (!site) continue;
+    steps.push({ src: site[0], dst: site[1], line: site[2] || 1 });
+  }
+  return steps;
+}
+
+/** What the graph should light up: the cycle nodes, the edges that run between them,
+ *  and the loop each group hangs on (bold, numbered). */
+function cycleFocus() {
+  if (!level || !cycleView) return null;
+  if (level._cyc && level._cycSel === cycleSel) return level._cyc;
+  const groups = cycleGroups().filter(g => cycleSel === null || g.scc === cycleSel);
+  const set = new Set(), edges = new Set(), steps = new Map();
+  for (const g of groups) {
+    for (const n of g.nodes) set.add(n.idx);
+    const loop = bestLoop(g);
+    loop.forEach((s, i) => edges.add(s + ">" + loop[(i + 1) % loop.length]));
+    if (groups.length === 1) loop.forEach((s, i) => steps.set(s, i + 1));
+  }
+  const res = { set, edges, steps, groups };
+  level._cyc = res; level._cycSel = cycleSel;
+  return res;
+}
+
+function toggleCycleView() {
+  cycleView = !cycleView;
+  cycleSel = cycleView ? "auto" : null;
+  if (cycleView) selected = null;
+  if (openIdx === null || cycleView) resetLegend();
+  render();
+  revealCycle();
+}
+
+function focusCycle(scc) { cycleSel = scc; render(); revealCycle(); }
+
+/** Scroll the loop into view — a cycle three screens down is still invisible. */
+function revealCycle() {
+  const cyc = cycleFocus();
+  if (!cyc) return;
+  const first = level.nodes.find(n => cyc.steps.get(n.idx) === 1) ||
+                level.nodes.find(n => cyc.set.has(n.idx));
+  if (first) revealInGraph(first, 0);
+}
+
+function renderCycleSide() {
+  const el = document.getElementById("side");
+  const groups = cycleGroups();
+  const where = focus.length ? focus.join("/") : "repo";
+  if (!groups.length) {
+    el.innerHTML = `<div class="section-label">cycles in ${esc(where)}</div>
+      <div class="empty">no import loop at this level.<br><br>a loop can still live deeper — drill into a folder and the count updates for it.</div>`;
+    return;
+  }
+  let html = `<div class="section-label">cycles in ${esc(where)} (${groups.length})</div>
+    <div class="sub">a loop means no module here can be built, tested or moved without the others. break one import and it is gone.</div>`;
+  if (cycleSel !== null && groups.length > 1)
+    html += `<div class="row" onclick="focusCycle(null)"><span class="name">&#8598; show all ${groups.length} loops</span></div>`;
+
+  groups.forEach((g, gi) => {
+    const open = cycleSel === g.scc;
+    const loop = bestLoop(g);
+    const names = loop.map(i => level.nodes[i].name + (level.nodes[i].isDir ? "/" : ""));
+    const sites = level.links
+      .filter(l => l.back && level.nodes[l.s].scc === g.scc && level.nodes[l.t].scc === g.scc)
+      .reduce((a, l) => a + l.count, 0);
+    html += `<div class="cyc-card${open ? " sel" : ""}" onclick="focusCycle(${open ? "null" : g.scc})">
+      <div class="cyc-head"><span>&#8634; cycle ${gi + 1}</span>
+        <span class="num">${g.nodes.length} modules · ${sites} imports</span></div>
+      <div class="loop-line">${names.map(n => `<span class="hop">${esc(n)}</span>`).join(' <span class="arrow">→</span> ')}
+        <span class="arrow">→</span> <span class="hop">${esc(names[0])}</span></div>`;
+
+    if (!open) { html += `</div>`; return; }
+
+    if (g.nodes.length > loop.length) {
+      html += `<div class="sub">${g.nodes.length - loop.length} more module${g.nodes.length - loop.length === 1 ? "" : "s"} are tangled in the same knot: ` +
+        g.nodes.filter(n => !loop.includes(n.idx)).map(n => esc(n.name)).join(", ") + `</div>`;
+    }
+
+    const chain = fileChain(g, loop);
+    if (chain.steps.length) {
+      html += `<div class="section-label">the imports that close it</div><div class="chain">` +
+        chain.steps.map((c, i) => `<div class="step" data-file="${c.src}" title="open ${esc(FILES[c.src])} at line ${c.line}"
+          onclick="event.stopPropagation(); openFile(${c.src}, ${c.line})"
+          onmouseenter="linkHover(${c.src}, true, true)" onmouseleave="linkHover(${c.src}, false)">
+          <span class="n">${i + 1}.</span> ${esc(FILES[c.src])}:${c.line}
+          <span class="arrow">→</span> ${esc(FILES[c.dst])}</div>`).join("") + `</div>
+        <div class="sub">${chain.exact
+          ? `these ${chain.steps.length} files import each other in a ring — delete or invert any one and the loop is broken`
+          : `no single file ring: each folder hop is closed by a different file. one import per hop, above — break one of them`}</div>`;
+    }
+
+    html += `<div class="section-label">loop hops (all import sites)</div>`;
+    html += loop.map((s, i) => {
+      const t = loop[(i + 1) % loop.length];
+      const l = level.links.find(x => x.s === s && x.t === t);
+      const key = "c" + s + ">" + t;
+      return `<div class="row" onclick="event.stopPropagation(); toggleSites('${key}')">
+        <span class="name">${expanded.has(key) ? "▾" : "▸"} ${esc(names[i])} <span class="arrow">→</span> ${esc(level.nodes[t].name)}</span>
+        <span class="num">${l ? l.count : 0}</span></div>` +
+        (expanded.has(key) && l ? `<div class="sites">${siteList(l)}</div>` : "");
+    }).join("");
+
+    const dirs = loop.map(i => level.nodes[i]).filter(n => n.isDir);
+    if (dirs.length) html += `<div class="sub">these are folders — drill into one (double-click its box) to see which files inside it carry the loop</div>`;
+    html += `</div>`;
+  });
+  el.innerHTML = html;
+}
+
 /* ---------- rendering ---------- */
 
 function matches(n) { return !query || n.name.toLowerCase().includes(query); }
@@ -439,9 +734,27 @@ function render() {
   const cy = document.getElementById("s-cycles");
   cy.textContent = level.cycleCount;
   cy.className = "stat-value" + (level.cycleCount ? " bad" : "");
+  document.getElementById("stat-cycles").classList.toggle("on", cycleView);
+  // scc ids are rebuilt with the level — a focus from the folder you just left is meaningless
+  if (cycleView) {
+    const gs = cycleGroups();
+    // "auto" stays sticky while a level has no loops, so drilling into one that does
+    // lands on its biggest cycle instead of an unfocused "show all"
+    if (cycleSel === "auto" || (cycleSel !== null && !gs.some(g => g.scc === cycleSel))) {
+      cycleSel = gs.length ? gs[0].scc : "auto";
+    }
+  }
   renderCrumbs();
   if (view === "graph") renderGraph(); else renderMatrix();
-  if (openIdx !== null) renderCodeSide(); else renderSide();
+  refreshSide();
+}
+
+/** Which panel owns the sidebar: the cycle report outranks an open file, so you can
+ *  click through a loop's imports without losing the loop. */
+function refreshSide() {
+  if (cycleView) renderCycleSide();
+  else if (openIdx !== null) renderCodeSide();
+  else renderSide();
 }
 
 function renderCrumbs() {
@@ -568,9 +881,9 @@ function layoutGhosts(list, y, avail, incoming) {
   return { height: rows ? rows * (GH + 10) : 0, width: maxX };
 }
 
-function renderGraph() {
-  const { nodes, links } = level;
-  if (!nodes.length) { document.getElementById("canvas").innerHTML = '<div class="empty">no files here</div>'; return; }
+/** Layer layout first, then any box the user dragged goes where they put it. */
+function layoutLevel() {
+  const { nodes } = level;
   const byLayer = new Map();
   for (const n of nodes) { if (!byLayer.has(n.layer)) byLayer.set(n.layer, []); byLayer.get(n.layer).push(n); }
   const layers = [...byLayer.keys()].sort((a, b) => b - a); // most-dependent on top
@@ -580,7 +893,8 @@ function renderGraph() {
   const ghostIn = showExternals ? level.ghostIn : [];
   const ghostOut = showExternals ? level.ghostOut : [];
   const inBand = layoutGhosts(ghostIn, 20, avail, true);
-  let y = 20 + (inBand.height ? inBand.height + 34 : 0), width = inBand.width;
+  // 46, not 20: same-row edges bow over the top of their row and need somewhere to go
+  let y = 46 + (inBand.height ? inBand.height + 34 : 0), width = inBand.width;
   layers.forEach(L => {
     const group = byLayer.get(L).sort((a, b) => (b.out + b.in) - (a.out + a.in));
     let x = 20;
@@ -589,32 +903,137 @@ function renderGraph() {
       if (x > 20 && x + n.w > avail - 20) { x = 20; y += NH + 14; }
       n.x = x; n.y = y;
       x += n.w + GAPX;
-      width = Math.max(width, n.x + n.w + 20);
     });
     y += NH + GAPY;
   });
   const outBand = layoutGhosts(ghostOut, y + 6, avail, false);
-  width = Math.max(width, outBand.width);
-  const height = y + outBand.height + 30;
-
-  const maxCount = Math.max(1, ...links.map(l => l.count));
-  const parts = [`<svg width="${Math.max(width, 400)}" height="${height}">`];
-  parts.push(`<defs><marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
-    <path d="M0,0 L8,4 L0,8 z" fill="currentColor"/></marker></defs>`);
-  for (const l of links) {
-    const a = nodes[l.s], b = nodes[l.t];
-    const x1 = a.x + a.w / 2, y1 = a.y + NH, x2 = b.x + b.w / 2, y2 = b.y;
-    const sw = 0.8 + 3.6 * Math.sqrt(l.count / maxCount);
-    const my = (y1 + y2) / 2;
-    const d = (b.y > a.y)
-      ? `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`
-      : `M${a.x + a.w},${a.y + NH / 2} C${a.x + a.w + 60},${a.y + NH / 2} ${b.x + b.w + 60},${b.y + NH / 2} ${b.x + b.w},${b.y + NH / 2}`;
-    parts.push(`<path class="edge${l.back ? " back" : ""}" data-s="${l.s}" data-t="${l.t}" d="${d}" stroke-width="${sw.toFixed(2)}" marker-end="url(#ah)"/>`);
+  let height = y + outBand.height + 30;
+  let moved = 0;
+  for (const n of nodes) {
+    const o = posOverride.get(n.path);
+    if (o) { n.x = o[0]; n.y = o[1]; moved++; }
+    width = Math.max(width, n.x + n.w + 20);
+    height = Math.max(height, n.y + NH + 40);
   }
+  width = Math.max(width, outBand.width);
+  document.getElementById("t-reset").style.display = moved ? "" : "none";
+  return { width, height, ghostIn, ghostOut };
+}
+
+/** Where an edge leaves and lands. Every edge used to leave the middle of one box
+ *  and hit the middle of the next, so six edges between two rows drew as one line.
+ *  Outgoing edges now fan across the bottom of their box, incoming ones across the
+ *  top of theirs, both ordered by the other end's position so they do not cross. */
+function assignSlots(nodes, links) {
+  const outs = new Map(), ins = new Map(), rows = [], ups = [];
+  for (const l of links) {
+    if (!outs.has(l.s)) outs.set(l.s, []);
+    if (!ins.has(l.t)) ins.set(l.t, []);
+    outs.get(l.s).push(l);
+    ins.get(l.t).push(l);
+    const a = nodes[l.s], b = nodes[l.t];
+    l.route = b.y > a.y + NH / 2 ? "down" : Math.abs(a.y - b.y) < NH ? "row" : "up";
+    if (l.route === "row") rows.push(l); else if (l.route === "up") ups.push(l);
+  }
+  for (const list of outs.values()) {
+    list.sort((a, b) => nodes[a.t].x - nodes[b.t].x);
+    list.forEach((l, k) => { l.sx = (k + 1) / (list.length + 1); });
+  }
+  for (const list of ins.values()) {
+    list.sort((a, b) => nodes[a.s].x - nodes[b.s].x);
+    list.forEach((l, k) => { l.tx = (k + 1) / (list.length + 1); });
+  }
+  // stagger the arcs so two edges over the same stretch of row, or two back-edges
+  // around the same right-hand side, do not land on top of each other
+  const stagger = (list, key) => {
+    const seen = new Map();
+    list.sort((a, b) => nodes[a.s].x - nodes[b.s].x);
+    for (const l of list) {
+      const k = key(l);
+      seen.set(k, (seen.get(k) || 0) + 1);
+      l.lane = (seen.get(k) - 1) % 5;
+    }
+  };
+  stagger(rows, l => Math.round(nodes[l.s].y / NH));
+  stagger(ups, l => 0);
+}
+
+/** `d` plus a point on the line for the label. Three cases, because one curve shape
+ *  cannot serve all of them: down the layers, across a row, or back up. */
+function edgePath(l) {
+  const a = level.nodes[l.s], b = level.nodes[l.t];
+  const lane = l.lane || 0;
+  if (l.route === "down") {
+    const x1 = a.x + a.w * (l.sx === undefined ? .5 : l.sx);
+    const x2 = b.x + b.w * (l.tx === undefined ? .5 : l.tx);
+    const y1 = a.y + NH, y2 = b.y, my = (y1 + y2) / 2;
+    // labels of edges leaving the same box would stack on one line; the slot they
+    // already have spreads them down the gap instead
+    const ly = my + ((l.sx === undefined ? .5 : l.sx) - .5) * Math.min(40, (y2 - y1) * .6);
+    return { d: `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`, mx: (x1 + x2) / 2, my: ly };
+  }
+  if (l.route === "row") {
+    // Side by side: arch over the row going right, under it coming back, so a mutual
+    // pair reads as two arcs instead of one line drawn twice. The ends sit on the top
+    // (or bottom) edges rather than the facing sides — neighbouring boxes are ~24px
+    // apart, and an arc that narrow is a hairpin nobody can follow.
+    const right = b.x >= a.x;
+    const x1 = a.x + a.w * (right ? .78 : .22), x2 = b.x + b.w * (right ? .22 : .78);
+    const y1 = right ? a.y : a.y + NH, y2 = right ? b.y : b.y + NH;
+    const cy = right ? Math.min(y1, y2) - 34 - lane * 14 : Math.max(y1, y2) + 34 + lane * 14;
+    return { d: `M${x1},${y1} C${x1},${cy} ${x2},${cy} ${x2},${y2}`,
+             mx: (x1 + x2) / 2, my: y1 + (cy - y1) * .75 + (right ? -3 : 9) };
+  }
+  // back up the layers: around the right, entering the target low and leaving the
+  // source high so the two directions of a pair stay apart
+  const ay = a.y + NH * 0.34, by = b.y + NH * 0.68;
+  const bulge = Math.max(a.x + a.w, b.x + b.w) + 34 + lane * 20;
+  return { d: `M${a.x + a.w},${ay} C${bulge},${ay} ${bulge},${by} ${b.x + b.w},${by}`,
+           mx: bulge - 6, my: (ay + by) / 2 };
+}
+
+function renderGraph() {
+  const { nodes, links } = level;
+  if (!nodes.length) { document.getElementById("canvas").innerHTML = '<div class="empty">no files here</div>'; return; }
+  hideTip();
+  let { width, height, ghostIn, ghostOut } = layoutLevel();
+  assignSlots(nodes, links);
+  // back-edges swing out past the right-hand boxes; the canvas has to hold them
+  for (const l of links) {
+    if (l.route !== "up") continue;
+    const far = Math.max(nodes[l.s].x + nodes[l.s].w, nodes[l.t].x + nodes[l.t].w);
+    width = Math.max(width, far + 54 + (l.lane || 0) * 20);
+  }
+  const cyc = cycleFocus();
+  const parts = [`<svg id="svg" width="${Math.max(width, 400)}" height="${height}">`];
+  // userSpaceOnUse: arrowheads stay one size instead of scaling with stroke width,
+  // where a heavy edge grew a 30px spearhead that swallowed the box it pointed at
+  const marker = (id, cls) => `<marker id="${id}" viewBox="0 0 8 8" refX="7" refY="4"
+    markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto">
+    <path class="${cls}" d="M0,0 L8,4 L0,8 z"/></marker>`;
+  parts.push(`<defs>${marker("ah", "mk-mute")}${marker("ah-red", "mk-red")}${marker("ah-blue", "mk-blue")}${marker("ah-ext", "mk-ext")}</defs>`);
+
+  // in cycle focus only the loops are drawn at all; otherwise back-edges are drawn
+  // last so a cycle is never buried under ordinary downhill traffic
+  const inLoop = l => cyc && cyc.set.has(l.s) && cyc.set.has(l.t) && l.back;
+  const drawn = (cyc ? links.filter(inLoop) : links.slice())
+    .sort((a, b) => (a.back ? 1 : 0) - (b.back ? 1 : 0));
+  const hits = [], labels = [];
+  for (const l of drawn) {
+    const g = edgePath(l);
+    parts.push(`<path class="edge${l.back ? " back" : ""}" data-s="${l.s}" data-t="${l.t}" data-i="${l.i}" d="${g.d}" marker-end="url(#ah)"/>`);
+    hits.push(`<path class="edge-hit" data-i="${l.i}" d="${g.d}"/>`);
+    if (showLabels || (cyc && cyc.edges.has(l.s + ">" + l.t))) labels.push(edgeLabelSvg(l, g, !!cyc));
+  }
+  parts.push(hits.join(""), labels.join(""));
+
   const maxLoc = Math.max(1, ...nodes.map(n => n.loc));
   for (const n of nodes) {
     const kind = nodeKind(n);
-    const cls = ["node", "k-" + kind, n.inCycle ? "cyc" : "", selected === n.name ? "sel" : "", matches(n) ? "" : "dim"].join(" ").trim();
+    const step = cyc ? cyc.steps.get(n.idx) : undefined;
+    const cls = ["node", "k-" + kind, n.inCycle ? "cyc" : "", selected === n.name ? "sel" : "",
+                 cyc && cyc.set.has(n.idx) ? "cyc-step" : "",
+                 matches(n) && !(cyc && !cyc.set.has(n.idx)) ? "" : "dim"].join(" ").replace(/\s+/g, " ").trim();
     const arg = "'" + esc(n.name).replace(/'/g, "\\'") + "'";
     const bar = Math.round((n.w - 2) * Math.sqrt(n.loc / maxLoc));  // sqrt so small files stay visible
     let bx = n.x + n.w - 8;
@@ -632,47 +1051,268 @@ function renderGraph() {
       <text class="label" x="${n.x + 26}" y="${n.y + 19}">${esc(n.name)}${n.isDir ? "/" : ""}</text>
       <text class="meta" x="${n.x + 10}" y="${n.y + 37}">${esc(metaLine(n))}</text>
       ${badgeSvg}
+      ${step ? `<circle class="step-dot" cx="${n.x}" cy="${n.y}" r="9"/>
+                <text class="step-t" x="${n.x}" y="${n.y + 3.5}">${step}</text>` : ""}
     </g>`);
   }
   // Ghost boxes are always drawn; their edges only for the selected node, otherwise
   // a couple of outside folders fan 50 lines across the whole level and bury it.
   const si = selected ? nodes.findIndex(n => n.name === selected) : -1;
+  ghostEdges = [];
   for (const g of [...ghostIn, ...ghostOut]) {
     const incoming = ghostIn.includes(g);
     const linked = si !== -1 && g.links.some(l => l.node === si);
     const arg = "'" + esc(g.path).replace(/'/g, "\\'") + "'";
-    parts.push(`<g class="ghost${si !== -1 && !linked ? " dim" : ""}" data-ghost="${esc(g.path)}" onclick="goToPath(${arg})">
+    parts.push(`<g class="ghost${(si !== -1 && !linked) || cyc ? " dim" : ""}" data-ghost="${esc(g.path)}" onclick="goToPath(${arg})">
       <rect x="${g.x}" y="${g.y}" width="${g.w}" height="${GH}"/>
       <text class="label" x="${g.x + 12}" y="${g.y + 17}">${esc(ghostLabel(g, incoming))}</text>
       <text class="meta" x="${g.x + 12}" y="${g.y + 31}">${esc(ghostMeta(g, incoming))}</text>
     </g>`);
     for (const l of g.links) {
-      if (l.node !== si) continue;
-      const n = nodes[l.node];
-      const [x1, y1, x2, y2] = incoming
-        ? [g.x + g.w / 2, g.y + GH, n.x + n.w / 2, n.y]
-        : [n.x + n.w / 2, n.y + NH, g.x + g.w / 2, g.y];
-      const my = (y1 + y2) / 2;
-      parts.push(`<path class="edge ext" data-ext="${l.node}" d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}"
-        stroke-width="${(0.8 + 3.2 * Math.sqrt(l.count / maxCount)).toFixed(2)}" marker-end="url(#ah)"/>`);
+      if (l.node !== si || cyc) continue;
+      const ge = ghostEdges.length;
+      ghostEdges.push({ g, l, incoming });
+      parts.push(`<path class="edge ext" data-ext="${l.node}" data-ge="${ge}" d="${ghostPath(ghostEdges[ge])}"
+        marker-end="url(#ah-ext)"/>`);
     }
   }
   parts.push("</svg>");
   document.getElementById("canvas").innerHTML = parts.join("");
+  wireGraph();
   highlightEdges();
+}
+
+/** Ghost edges connect a box to a dashed stand-in for the outside world. */
+function ghostPath(ge) {
+  const n = level.nodes[ge.l.node], g = ge.g;
+  const [x1, y1, x2, y2] = ge.incoming
+    ? [g.x + g.w / 2, g.y + GH, n.x + n.w / 2, n.y]
+    : [n.x + n.w / 2, n.y + NH, g.x + g.w / 2, g.y];
+  const my = (y1 + y2) / 2;
+  return `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`;
+}
+
+/** What this arrow carries, on the line itself. Off by default: on a dense level
+ *  every label overlaps every other one, which is worse than no label at all. */
+function edgeLabelSvg(l, geo, isCycle) {
+  const syms = edgeSymbols(l);
+  const text = `${l.count}×` + (syms.length ? ` ${syms[0].name}${syms.length > 1 ? ` +${syms.length - 1}` : ""}` : "");
+  const w = text.length * 5.2 + 8;
+  return `<rect class="elabel-bg" x="${geo.mx - w / 2}" y="${geo.my - 7}" width="${w}" height="12" rx="3"/>
+    <text class="elabel${isCycle ? " cyc" : ""}" x="${geo.mx}" y="${geo.my + 2}">${esc(text)}</text>`;
+}
+
+/* ---------- dragging boxes, and what an edge carries ---------- */
+
+function wireGraph() {
+  const svg = document.getElementById("svg");
+  if (!svg) return;
+  svg.querySelectorAll("path.edge-hit").forEach(p => {
+    const l = level.links[+p.dataset.i];
+    p.addEventListener("mouseenter", e => edgeHover(l, true, e));
+    p.addEventListener("mousemove", moveTip);
+    p.addEventListener("mouseleave", () => edgeHover(l, false));
+    p.addEventListener("click", () => edgeClick(l));
+  });
+  svg.addEventListener("pointerdown", onGraphPointerDown);
+}
+
+/** No automatic layout untangles every graph, so the boxes move. Positions are kept
+ *  per level path, so drilling out and back in returns to the arrangement you made. */
+function onGraphPointerDown(e) {
+  if (e.button !== 0) return;
+  const g = e.target.closest ? e.target.closest("g.node") : null;
+  if (!g) return;
+  const idx = +g.dataset.node, n = level.nodes[idx];
+  const paths = [...document.querySelectorAll("#svg path[data-i]")]
+    .filter(p => { const l = level.links[+p.dataset.i]; return l && (l.s === idx || l.t === idx); });
+  dragState = { idx, g, ox: n.x, oy: n.y, px: e.clientX, py: e.clientY, paths,
+                ext: [...document.querySelectorAll("#svg path[data-ge]")]
+                       .filter(p => ghostEdges[+p.dataset.ge].l.node === idx) };
+  dragMoved = false;
+  hideTip();
+  window.addEventListener("pointermove", onGraphPointerMove);
+  window.addEventListener("pointerup", onGraphPointerUp, { once: true });
+  e.preventDefault();
+}
+
+function onGraphPointerMove(e) {
+  if (!dragState) return;
+  const dx = e.clientX - dragState.px, dy = e.clientY - dragState.py;
+  if (!dragMoved && Math.abs(dx) + Math.abs(dy) < 4) return;
+  dragMoved = true;
+  document.body.classList.add("dragging");
+  const n = level.nodes[dragState.idx];
+  n.x = Math.max(4, dragState.ox + dx);
+  n.y = Math.max(4, dragState.oy + dy);
+  dragState.g.setAttribute("transform", `translate(${n.x - dragState.ox},${n.y - dragState.oy})`);
+  for (const p of dragState.paths) p.setAttribute("d", edgePath(level.links[+p.dataset.i]).d);
+  for (const p of dragState.ext) p.setAttribute("d", ghostPath(ghostEdges[+p.dataset.ge]));
+}
+
+function onGraphPointerUp() {
+  window.removeEventListener("pointermove", onGraphPointerMove);
+  document.body.classList.remove("dragging");
+  const st = dragState;
+  dragState = null;
+  if (!st || !dragMoved) return;
+  const n = level.nodes[st.idx];
+  posOverride.set(n.path, [n.x, n.y]);
+  suppressClick = true;                  // the click that follows the drop is not a click
+  setTimeout(() => { suppressClick = false; }, 0);
+  renderGraph();                         // re-slot the edges around the new position
+}
+
+function resetLayout() {
+  for (const n of level.nodes) posOverride.delete(n.path);
+  renderGraph();
+}
+
+function edgeHover(l, on, e) {
+  const vis = document.querySelector(`#svg path.edge[data-i="${l.i}"]`);
+  if (vis) vis.classList.toggle("hov", on);
+  for (const idx of [l.s, l.t]) {
+    document.querySelector(`g.node[data-node="${idx}"]`)?.classList.toggle("xhi", on);
+  }
+  if (on) { showTip(edgeTip(l)); moveTip(e); } else hideTip();
+}
+
+/** Clicking an arrow answers "which imports are these?" in the panel that already
+ *  lists import sites — the loop hop in cycle focus, the node's own list otherwise. */
+function edgeClick(l) {
+  expanded.add("c" + l.s + ">" + l.t);
+  expanded.add("o" + l.s + ">" + l.t);
+  if (!cycleView) selected = level.nodes[l.s].name;
+  hideTip();
+  if (view === "graph") renderGraph();
+  refreshSide();
+}
+
+function showTip(html) {
+  const t = document.getElementById("tip");
+  t.innerHTML = html;
+  t.classList.add("on");
+}
+function hideTip() { document.getElementById("tip").classList.remove("on"); }
+function moveTip(e) {
+  const t = document.getElementById("tip");
+  if (!t.classList.contains("on") || !e) return;
+  const r = t.getBoundingClientRect();
+  t.style.left = Math.min(e.clientX + 14, window.innerWidth - r.width - 10) + "px";
+  t.style.top = Math.min(e.clientY + 14, window.innerHeight - r.height - 10) + "px";
+}
+
+function edgeTip(l) {
+  const a = level.nodes[l.s], b = level.nodes[l.t];
+  const syms = edgeSymbols(l);
+  const shown = syms.slice(0, 10).map(s =>
+    `<span class="tip-sym"><b>${esc(s.name)}</b> <span class="k">${s.kind}</span></span>`).join("");
+  return `<div class="tip-head">${esc(a.name)}${a.isDir ? "/" : ""} <span class="arrow">→</span> ${esc(b.name)}${b.isDir ? "/" : ""}</div>
+    <div class="tip-sub">${l.count} import site${l.count === 1 ? "" : "s"}` +
+      (l.typeOnly ? ` · ${l.typeOnly} type-only` : "") +
+      (l.back ? ` · <span class="red">closes a cycle</span>` : "") + `</div>` +
+    (shown ? `<div class="tip-syms">${shown}${syms.length > 10 ? `<span class="tip-sym more">+${syms.length - 10}</span>` : ""}</div>`
+           : `<div class="tip-sub">whole-module import — no named symbols</div>`) +
+    `<div class="tip-sub">click to list every site</div>`;
+}
+
+/** Every name this edge actually pulls across, with what that name is. An import is
+ *  not a call, but knowing the binding is a function and not a type is the difference
+ *  between an edge that runs at runtime and one the compiler erases. */
+function edgeSymbols(l) {
+  const out = new Map();
+  for (const s of l.sites) {
+    for (const name of (SYM_EDGE.get(s[0] + ">" + s[1]) || [])) {
+      const key = s[1] + ":" + name;
+      if (!out.has(key)) out.set(key, { name, kind: symbolKind(s[1], name), n: 0 });
+      out.get(key).n++;
+    }
+  }
+  return [...out.values()].sort((x, y) => y.n - x.n || x.name.localeCompare(y.name));
+}
+
+/** src>dst -> the names imported across it, built once. */
+const SYM_EDGE = (() => {
+  const m = new Map();
+  for (const e of EDGES) {
+    if (!e[5] || !e[5].length) continue;
+    const names = [];
+    for (const [, name] of e[5]) if (name && !names.includes(name)) names.push(name);
+    if (names.length) m.set(e[0] + ">" + e[1], names);
+  }
+  return m;
+})();
+
+const kindCache = new Map(), lineCache = new Map();
+
+function sourceLine(fileIdx, line) {
+  if (!SOURCES[fileIdx]) return "";
+  if (!lineCache.has(fileIdx)) lineCache.set(fileIdx, SOURCES[fileIdx].split("\n"));
+  return lineCache.get(fileIdx)[line - 1] || "";
+}
+
+/** What kind of thing the imported name is, read off its declaration in the file
+ *  that exports it. Falls back to naming convention when sources were not embedded. */
+function symbolKind(fileIdx, name) {
+  const key = fileIdx + ":" + name;
+  if (kindCache.has(key)) return kindCache.get(key);
+  let kind = guessKind(name);
+  const exp = (EXPORTS[fileIdx] || []).find(e => e[0] === name);
+  if (name === "*") kind = "namespace";
+  else if (exp && exp[2]) kind = "re-export";
+  else if (exp) kind = classifyDecl(sourceLine(fileIdx, exp[1]), name, FILES[fileIdx]) || kind;
+  kindCache.set(key, kind);
+  return kind;
+}
+
+function classifyDecl(src, name, path) {
+  if (!src) return null;
+  const n = name.replace(/[^\w$]/g, "");
+  const has = re => new RegExp(re.replace("NAME", n)).test(src);
+  const component = /\.[jt]sx$/.test(path) && /^[A-Z]/.test(n);
+  if (has("\\b(class)\\s+NAME\\b")) return "class";
+  if (has("\\b(interface|type)\\s+NAME\\b")) return "type";
+  if (has("\\b(function|def)\\s+NAME\\b")) return component ? "component" : /^use[A-Z]/.test(n) ? "hook" : "function";
+  if (has("\\b(const|let|var)\\s+NAME\\b")) {
+    if (/=>|\bfunction\b/.test(src)) return component ? "component" : /^use[A-Z]/.test(n) ? "hook" : "function";
+    return "const";
+  }
+  if (/^\s*(export\s+)?default\b/.test(src)) return "default";
+  return null;
+}
+
+function guessKind(name) {
+  if (name === "default") return "default export";
+  if (/^use[A-Z]/.test(name)) return "hook";
+  if (/^[A-Z0-9_]+$/.test(name)) return "const";
+  if (/^[A-Z]/.test(name)) return "class/type";
+  return "value";
 }
 
 function highlightEdges() {
   const si = selected ? level.nodes.findIndex(n => n.name === selected) : -1;
+  const cyc = cycleFocus();
+  const isExt = p => p.dataset.ext !== undefined;
+  const arrow = p => p.setAttribute("marker-end",
+    isExt(p) ? "url(#ah-ext)" :
+    p.classList.contains("hi") ? "url(#ah-blue)" :
+    ["cyc-loop", "cyc-on", "back"].some(c => p.classList.contains(c)) ? "url(#ah-red)" : "url(#ah)");
   document.querySelectorAll("path.edge").forEach(p => {
-    p.classList.remove("hi", "dim");
-    if (si === -1) return;
-    if (p.dataset.ext !== undefined) {
+    p.classList.remove("hi", "dim", "cyc-on", "cyc-loop");
+    if (cyc) {
+      const s = +p.dataset.s, t = +p.dataset.t;
+      if (isExt(p) || !cyc.set.has(s) || !cyc.set.has(t) || !p.classList.contains("back")) p.classList.add("dim");
+      else p.classList.add(cyc.edges.has(s + ">" + t) ? "cyc-loop" : "cyc-on");
+      return arrow(p);
+    }
+    if (si === -1) return arrow(p);
+    if (isExt(p)) {
       if (+p.dataset.ext === si) p.classList.add("hi"); else p.classList.add("dim");
-      return;
+      return arrow(p);
     }
     const s = +p.dataset.s, t = +p.dataset.t;
     if (s === si || t === si) p.classList.add("hi"); else p.classList.add("dim");
+    arrow(p);
   });
 }
 
@@ -760,7 +1400,7 @@ function renderMatrix() {
   document.getElementById("canvas").innerHTML = html;
 }
 
-function select(name) { selected = selected === name ? null : name; if (view === "graph") renderGraph(); renderSide(); }
+function select(name) { selected = selected === name ? null : name; if (view === "graph") renderGraph(); refreshSide(); }
 
 function toggleSymbol(name, line) {
   const key = "s:" + name;
@@ -774,7 +1414,7 @@ function toggleSymbol(name, line) {
   renderCodeSide();
 }
 
-function toggleSites(key) { expanded.has(key) ? expanded.delete(key) : expanded.add(key); renderSide(); }
+function toggleSites(key) { expanded.has(key) ? expanded.delete(key) : expanded.add(key); refreshSide(); }
 
 function siteList(l) {
   return l.sites.map(s => {
@@ -800,7 +1440,15 @@ function nodeOpen(name) {
 /** Single click: select (details land in the side panel) and, for a file, open its
  *  source. Double click still drills into a folder. */
 function nodeClick(name) {
+  if (suppressClick) return;   // this "click" is the end of a drag
   const n = level.nodes.find(x => x.name === name);
+  // in cycle focus a click means "this loop", not "this node" — the report stays in charge
+  if (cycleView) {
+    if (n && n.inCycle && cycleSel !== n.scc) focusCycle(n.scc);
+    const fi = n ? nodeFileIdx(n) : -1;
+    if (fi >= 0) openFile(fi, 0);
+    return;
+  }
   select(name);   // details render into the side panel; the diagram stays unobscured
   if (!n || selected !== name || n.isDir) return;
   const idx = nodeFileIdx(n);
@@ -916,12 +1564,7 @@ function symbolUsers(fileIdx, name) {
 
 /** Names an importer pulls out of one target file, for the edge lists. */
 function symbolsBetween(srcIdx, dstIdx) {
-  const names = new Set();
-  for (const e of DATA.edges) {
-    if (e[0] !== srcIdx || e[1] !== dstIdx) continue;
-    for (const [, name] of (e[5] || [])) names.add(name);
-  }
-  return [...names];
+  return SYM_EDGE.get(srcIdx + ">" + dstIdx) || [];
 }
 
 let openIdx = null, openLine = 0;
@@ -1000,7 +1643,7 @@ function openFile(idx, line, push) {
   const target = document.getElementById("L" + (openLine || 1));
   if (target) target.scrollIntoView({ block: openLine ? "center" : "start" });
   else el.scrollTop = 0;
-  renderCodeSide();
+  refreshSide();
   // keep the diagram pointed at whatever you just opened
   const ni = level && level.owner ? level.owner[idx] : -1;
   if (ni !== undefined && ni !== -1) revealInGraph(level.nodes[ni], 0);
@@ -1042,10 +1685,16 @@ function hideCode() {
   });
 })();
 
+const LEGEND_DEFAULT = "click any node = details in the side panel · drag a box to untangle the edges · hover an arrow = what it imports, click it = every site · double-click folder = drill in · red dashed edge = cycle back-edge (type-only imports excluded) · click the cycles count = focus the loops";
+const LEGEND_CYCLE = "cycle focus · red numbered boxes = the loop, in order · click a cycle card to isolate it · click a file to open the import that closes the ring · Esc or the cycles count to leave";
+
+function resetLegend() {
+  document.getElementById("legend").textContent = cycleView ? LEGEND_CYCLE : LEGEND_DEFAULT;
+}
+
 function closeCode() {
   hideCode();
-  document.getElementById("legend").textContent =
-    "click any node = details in the side panel · click file = open source · double-click folder = drill in · breadcrumb = drill out · red dashed edge = cycle back-edge (type-only imports excluded)";
+  resetLegend();
   render();
 }
 
@@ -1124,8 +1773,12 @@ function renderCodeSide() {
 }
 
 document.addEventListener("keydown", e => {
-  if (e.key === "Escape" && openIdx !== null) closeCode();
+  if (e.key !== "Escape") return;
+  if (openIdx !== null) closeCode();
+  else if (cycleView) toggleCycleView();
 });
+
+document.getElementById("stat-cycles").onclick = toggleCycleView;
 
 document.getElementById("t-view").onclick = e => {
   view = view === "graph" ? "matrix" : "graph";
@@ -1143,6 +1796,12 @@ document.getElementById("t-type").onclick = e => {
   e.target.classList.toggle("on", hideTypeOnly);
   render();
 };
+document.getElementById("t-labels").onclick = e => {
+  showLabels = !showLabels;
+  e.target.classList.toggle("on", showLabels);
+  if (view === "graph") renderGraph();
+};
+document.getElementById("t-reset").onclick = resetLayout;
 document.getElementById("search").oninput = e => { query = e.target.value.toLowerCase(); if (view === "graph") renderGraph(); };
 
 document.getElementById("glyph-legend").innerHTML = Object.entries(KINDS)

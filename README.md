@@ -300,6 +300,21 @@ every resolved import, explorable at any directory depth.
 read its source with import lines linked, trace a symbol to every call site
 through the barrels that re-export it.
 
+Boxes are draggable — no automatic layout untangles every graph, so move them and
+the edges re-route live (**reset layout** puts them back). Hovering an arrow says
+what it carries: import-site count, how many are type-only, and each imported name
+with what it is (function, class, type, component, hook, re-export), read off the
+declaration in the file that exports it. Clicking an arrow lists every site. Arrows
+are one size and one width regardless of weight — the count belongs in the label,
+not in the line thickness — and **edge labels** draws it on the line.
+
+Click the **cycles** count in the header to focus the loops at that level: the
+graph dims everything outside them and numbers the ring in order, and the side
+panel names the modules in sequence plus the concrete `file:line` imports that
+close it — click one to land on the import statement to delete. Where the loop
+is between folders and no single file ring exists, it shows the one import per
+hop that closes each side instead. Esc leaves the mode.
+
 Entry points — framework routes, `package.json` `exports` targets, configs —
 are detected from the markers actually present (Next.js, Expo, Vite, Python
 packaging) so they are not reported as dead code. Extend with `--entry`:
