@@ -39,8 +39,17 @@ body { font-family: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace
 .stat.clickable { cursor: pointer; padding: 1px 6px; border-radius: 4px; user-select: none; }
 .stat.clickable:hover { background: var(--bg-hover); }
 .stat.clickable.on { background: color-mix(in srgb, var(--red) 22%, transparent); }
-/* lines of code lives with the legend, bottom left — the header carries structure counts */
-.legend .stat.loc-total { display: inline-flex; margin-right: 12px; }
+/* The counts used to sit in the header, where a deep breadcrumb and eight controls
+   already compete for the row. They hang off the crumb instead: hover the path,
+   read the level. Cycles stays in the header — it is a button, not a number. */
+.crumb-zone { position: relative; display: flex; align-items: center; gap: 6px; }
+.crumb-zone .peek { color: var(--text-muted); display: inline-flex; opacity: .55; }
+.crumb-zone:hover .peek { opacity: 1; color: var(--text); }
+.statbox { position: absolute; top: 100%; left: 0; margin-top: 5px; z-index: 25; display: none;
+           gap: 14px; align-items: center; white-space: nowrap; padding: 7px 11px;
+           background: var(--bg-panel); border: 1px solid var(--border); border-radius: 6px;
+           box-shadow: 0 6px 20px rgba(0,0,0,.28); }
+.crumb-zone:hover .statbox { display: flex; }
 .spacer { flex: 1; }
 input[type=search] { background: var(--bg); color: var(--text); border: 1px solid var(--border);
                      border-radius: 4px; padding: 3px 8px; font-family: inherit; font-size: 12px; width: 180px; }
@@ -62,6 +71,11 @@ input[type=search] { background: var(--bg); color: var(--text); border: 1px soli
 .canvas { flex: 1; overflow: auto; position: relative; }
 .side { width: 380px; border-left: 1px solid var(--border); background: var(--bg-panel); overflow-y: auto; padding: 12px; }
 .side h3 { font-size: 13px; margin-bottom: 2px; word-break: break-all; }
+/* the panel can describe a file the code pane is not showing — this puts it back */
+.side h3 .view { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap;
+                 margin-left: 7px; padding: 0 6px; font-size: 10px; border: 1px solid var(--border);
+                 border-radius: 4px; color: var(--text-muted); cursor: pointer; vertical-align: 1px; }
+.side h3 .view:hover { background: var(--bg-hover); color: var(--blue); border-color: var(--blue); }
 .side .sub { color: var(--text-muted); font-size: 11px; margin-bottom: 10px; }
 .section-label { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-muted);
                  margin: 12px 0 5px; border-bottom: 1px solid var(--border); padding-bottom: 3px; }
@@ -74,6 +88,10 @@ input[type=search] { background: var(--bg); color: var(--text); border: 1px soli
 .syms { padding: 0 6px 5px 22px; display: flex; flex-wrap: wrap; gap: 3px; }
 .sym { font-size: 10px; padding: 0 5px; border-radius: 3px; background: var(--badge-bg); color: var(--text-muted); }
 .sym.more { opacity: .7; }
+/* the row whose file is on screen while the panel stays on another one */
+.row.showing { background: color-mix(in srgb, var(--blue) 16%, transparent); box-shadow: inset 2px 0 0 var(--blue); }
+.pinned { font-size: 11px; color: var(--text-muted); margin: 6px 0 2px; overflow-wrap: anywhere; }
+.pinned b { color: var(--text); font-weight: 600; }
 .row.unused-sym .name { color: var(--text-muted); text-decoration: line-through; text-decoration-thickness: 1px; }
 .row.unused-sym .num { color: var(--red); }
 .sites { padding: 2px 0 6px 14px; font-size: 11px; color: var(--text-muted); }
@@ -142,7 +160,7 @@ svg { display: block; }
 @media (prefers-reduced-motion: reduce) { .edge.cyc-loop { animation: none; stroke-dasharray: none; } }
 /* a marker does not inherit from the path that references it, so each arrowhead
    colour needs its own marker rather than currentColor */
-.mk-mute { fill: var(--text-muted); } .mk-red { fill: var(--red); }
+.mk-mute { fill: var(--text-muted); } .mk-red { fill: var(--red); } .mk-amber { fill: var(--amber); }
 .mk-blue { fill: var(--blue); } .mk-ext { fill: var(--ext); }
 .node.cyc-step rect { stroke: var(--red); stroke-width: 2.4; }
 .step-dot { fill: var(--red); }
@@ -203,10 +221,38 @@ table.matrix td.diag { background: var(--bg-hover); }
            box-shadow: inset 2px 0 0 var(--amber); }
 .node.xhi rect { stroke: var(--amber); stroke-width: 2.4; }
 .node.xhi .loc-bar { opacity: .9; }
+/* the import you are following: same amber as the rows and boxes it connects, and it
+   stays lit after the click, through re-renders, until you follow another one */
+.edge.trace { stroke: var(--amber); opacity: 1; stroke-width: 2.6; stroke-dasharray: none; }
+.node.tr rect { stroke: var(--amber); stroke-width: 2.4; }
+.node.tr .loc-bar { opacity: .9; }
 .ghost.xhi { opacity: 1; }
 .ghost.xhi rect { stroke-width: 2.4; stroke-dasharray: none; fill: color-mix(in srgb, var(--ext) 16%, transparent); }
-.legend { position: sticky; bottom: 0; padding: 6px 12px; font-size: 11px; color: var(--text-muted);
-          background: var(--bg); border-top: 1px solid var(--border); }
+/* ---- legend ----
+   Two full-width bands of glyph keys used to eat the bottom of every window. The
+   same text now lives in one card, opened by a corner button on hover (click to
+   pin it open, for touch and for reading it slowly). */
+.legend-dock { position: fixed; left: 10px; bottom: 10px; z-index: 30; }
+.legend-fab { cursor: pointer; user-select: none; display: inline-flex; align-items: center; gap: 5px;
+              padding: 3px 10px; font-size: 11px; color: var(--text-muted); background: var(--bg-panel);
+              border: 1px solid var(--border); border-radius: 999px; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+.legend-dock:hover .legend-fab, .legend-dock.pin .legend-fab { color: var(--text); background: var(--bg-selected); }
+.legend-fab.cyc { color: var(--red); border-color: var(--red); }
+.legend-card { display: none; position: absolute; left: 0; bottom: 100%; margin-bottom: 6px;
+               width: min(620px, calc(100vw - 40px)); max-height: 72vh; overflow: auto;
+               padding: 10px 12px 12px; font-size: 11px; line-height: 1.8; color: var(--text-muted);
+               background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
+               box-shadow: 0 8px 28px rgba(0,0,0,.32); }
+.legend-dock:hover .legend-card, .legend-dock.pin .legend-card { display: block; }
+.legend-card .lg-label { font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+                         margin: 10px 0 3px; padding-bottom: 2px; border-bottom: 1px solid var(--border); }
+.legend-card .lg-label:first-child { margin-top: 0; }
+.legend-card .lg-row { color: var(--text); }
+.legend-card .lg-row + .lg-row { margin-top: 2px; }
+/* keys read as a list, not as one run-on sentence */
+.legend-card .lg-keys { display: flex; flex-wrap: wrap; gap: 2px 18px; }
+.legend-card .lg-keys > span { display: inline-flex; align-items: baseline; gap: 4px; }
+.legend-card .lg-keys .glyph-key, .legend-card .lg-keys .pill { margin-right: 0; }
 
 /* ---- code viewer ---- */
 :root { --c-cmt: #6a9955aa; --c-str: #a31515; --c-kw: #af00db; --c-num: #098658; --c-typ: #267f99; --c-tag: #800000; --c-cur: #fff3bf; }
@@ -221,6 +267,11 @@ table.matrix td.diag { background: var(--bg-hover); }
 .code-head .btn { cursor: pointer; padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px;
                   color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px; }
 .code-head .btn:hover { background: var(--bg-hover); color: var(--text); }
+/* nowhere to go: still drawn, so the row does not reshuffle as you navigate */
+.code-head .btn.off { opacity: .3; pointer-events: none; }
+.code-head .path { flex: 1; min-width: 0; }
+.code-head .x { padding: 2px 7px; }
+.code-head .x:hover { background: var(--red); color: #fff; border-color: var(--red); }
 .code { flex: 1; overflow: auto; font-size: 12px; line-height: 1.5; padding: 6px 0 40vh; }
 .cl { display: flex; white-space: pre; }
 .cl .gut { flex: 0 0 52px; text-align: right; padding-right: 10px; color: var(--text-muted); opacity: .55;
@@ -240,15 +291,22 @@ table.matrix td.diag { background: var(--bg-hover); }
 </head>
 <body>
 <div class="header">
-  <div class="crumbs" id="crumbs"></div>
+  <div class="crumb-zone" id="crumb-zone" title="hover for the counts at this level">
+    <div class="crumbs" id="crumbs"></div>
+    <span class="peek stat-icon" data-icon="chart"></span>
+    <div class="statbox" id="statbox">
+      <div class="stat" title="folders at this level"><span class="stat-icon" data-icon="folder"></span><span class="stat-label">folders</span><span class="stat-value" id="s-folders">0</span></div>
+      <div class="stat" title="files under this level"><span class="stat-icon" data-icon="file"></span><span class="stat-label">files</span><span class="stat-value" id="s-files">0</span></div>
+      <div class="stat" title="import sites between nodes at this level"><span class="stat-icon" data-icon="link"></span><span class="stat-label">edges</span><span class="stat-value" id="s-edges">0</span></div>
+      <div class="stat" title="lines of code at this level"><span class="stat-icon" data-icon="lines"></span><span class="stat-label">lines of code</span><span class="stat-value" id="s-loc">0</span></div>
+    </div>
+  </div>
   <div class="spacer"></div>
-  <div class="stat" title="folders at this level"><span class="stat-icon" data-icon="folder"></span><span class="stat-label">folders</span><span class="stat-value" id="s-folders">0</span></div>
-  <div class="stat" title="files under this level"><span class="stat-icon" data-icon="file"></span><span class="stat-label">files</span><span class="stat-value" id="s-files">0</span></div>
-  <div class="stat" title="import sites between nodes at this level"><span class="stat-icon" data-icon="link"></span><span class="stat-label">edges</span><span class="stat-value" id="s-edges">0</span></div>
   <div class="stat clickable" id="stat-cycles" title="dependency cycles at this level — click to focus the import loops"><span class="stat-icon" data-icon="cycle"></span><span class="stat-label">cycles</span><span class="stat-value" id="s-cycles">0</span></div>
   <span class="toggle on" id="t-view"><span data-icon="chart"></span>graph</span>
   <span class="toggle on" id="t-ext"><span data-icon="globe"></span>externals</span>
   <span class="toggle" id="t-type"><span data-icon="tag"></span>hide type-only</span>
+  <span class="toggle" id="t-leaf" title="hide leaves — nodes that import nothing at this level, so only what depends on something is drawn"><span data-icon="leaf"></span>hide leaves</span>
   <span class="toggle" id="t-labels"><span data-icon="sym"></span>edge labels</span>
   <span class="toggle" id="t-reset" style="display:none"><span data-icon="pin"></span>reset layout</span>
   <span class="search-wrap"><span class="stat-icon" data-icon="search"></span><input type="search" id="search" placeholder="filter nodes…"></span>
@@ -258,22 +316,30 @@ table.matrix td.diag { background: var(--bg-hover); }
   <div class="split-handle" id="handle" style="display:none"></div>
   <div class="code-pane" id="codepane" style="display:none">
     <div class="code-head">
-      <span class="btn" onclick="codeBack()">← back</span>
-      <span class="btn" onclick="closeCode()"><span data-icon="chart"></span> graph</span>
+      <span class="btn" id="code-back" onclick="codeBack()" title="back to the file you came from">← back</span>
+      <span class="btn" id="code-fwd" onclick="codeForward()" title="forward, to the file you just came back from">forward →</span>
       <span class="path" id="code-path"></span>
+      <span class="btn x" onclick="closeCode()" title="close the code view (Esc)"><span data-icon="close"></span></span>
     </div>
     <div class="code" id="code"></div>
   </div>
   <div class="side" id="side"></div>
 </div>
 <div class="tip" id="tip"></div>
-<div class="legend">
-  <span class="stat loc-total" title="lines of code at this level"><span class="stat-icon" data-icon="lines"></span><span class="stat-label">lines of code</span><span class="stat-value" id="s-loc">0</span></span>
-  <span id="glyph-legend"></span>
-  <span id="badge-legend"></span>
-  · <span style="color:var(--ext)">dashed violet = outside this folder; select a node to trace its outside edges, click a ghost to go there</span> · bar under a node = lines of code
+<div class="legend-dock" id="legend-dock">
+  <div class="legend-card" id="legend-card">
+    <div class="lg-label">what to do here</div>
+    <div class="lg-row" id="legend">click any node = details in the side panel · drag a box to untangle the edges · hover an arrow = what it imports, click it = every site · double-click folder = drill in · red dashed edge = cycle back-edge (type-only imports excluded) · click the cycles count = focus the loops</div>
+    <div class="lg-label">node kinds</div>
+    <div class="lg-keys" id="glyph-legend"></div>
+    <div class="lg-label">badges</div>
+    <div class="lg-keys" id="badge-legend"></div>
+    <div class="lg-label">edges &amp; marks</div>
+    <div><span style="color:var(--ext)">dashed violet = outside this folder; select a node to trace its outside edges, click a ghost to go there</span></div>
+    <div>bar under a node = lines of code · <span style="color:var(--red)">red dashed = cycle back-edge</span></div>
+  </div>
+  <span class="legend-fab" id="legend-fab"><span data-icon="book"></span>legend</span>
 </div>
-<div class="legend" id="legend">click any node = details in the side panel · drag a box to untangle the edges · hover an arrow = what it imports, click it = every site · double-click folder = drill in · red dashed edge = cycle back-edge (type-only imports excluded) · click the cycles count = focus the loops</div>
 <script>
 /* ---------- icons ----------
    Drawn once, at 16×16, in strokes only. The same path serves the HTML panels and
@@ -305,6 +371,8 @@ const ICONS = {
   pin: '<path d="M8 2.7a4.2 4.2 0 0 0-4.2 4.2c0 3.1 4.2 6.5 4.2 6.5s4.2-3.4 4.2-6.5A4.2 4.2 0 0 0 8 2.7z"/><circle cx="8" cy="6.8" r="1.5"/>',
   book: '<path d="M8 4.4C6.6 3.2 4.8 2.9 2.8 3.3v8.4c2-.4 3.8-.1 5.2 1.1 1.4-1.2 3.2-1.5 5.2-1.1V3.3c-2-.4-3.8-.1-5.2 1.1z"/><path d="M8 4.4v8.4"/>',
   export: '<path d="M8 10V2.9M5.6 5.3 8 2.9l2.4 2.4"/><path d="M3.2 10.2v2a1.2 1.2 0 0 0 1.2 1.2h7.2a1.2 1.2 0 0 0 1.2-1.2v-2"/>',
+  close: '<path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5"/>',
+  eye: '<path d="M1.5 8S4.2 3.6 8 3.6 14.5 8 14.5 8 11.8 12.4 8 12.4 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="1.9"/>',
 };
 
 /** Most icons live on a 16 grid; a few declare their own. An inline stroke-width
@@ -407,6 +475,8 @@ let level = null;
 let cycleView = false;    // cycle focus: report in the side panel, loops lit in the graph
 let cycleSel = null;      // scc id under focus; null = every loop at this level, "auto" = pick the biggest
 let showLabels = false;   // draw what each edge carries, on the edge
+let hideLeaves = false;   // drop the nodes that import nothing — see levelForView()
+let hiddenLeaves = 0;     // how many the last build dropped, reported on the toggle
 let posOverride = new Map();   // node path -> [x, y], wherever the user dragged it
 let ghostEdges = [];      // rendered outside-world edges, by data-ge index
 let dragState = null, dragMoved = false, suppressClick = false;
@@ -427,13 +497,20 @@ function edgeWeight(e) { return hideTypeOnly ? e[2] - e[4] : e[2]; }
  *  an import loop — cycle detection uses this regardless of the display toggle. */
 function edgeValueWeight(e) { return e[2] - e[4]; }
 
-function buildLevel() {
+/** `hiddenSegs` drops whole child segments from the level — used by "hide leaves",
+ *  which needs a second pass rather than a render-time filter: the counts, the
+ *  layers and the cycle detection all have to agree with what is drawn. */
+function buildLevel(hiddenSegs) {
   const nodes = new Map();
   const owner = new Int32Array(FILES.length).fill(-1);
+  const dropped = hiddenSegs && hiddenSegs.size ? new Uint8Array(FILES.length) : null;
   const order = [];
   for (let i = 0; i < FILES.length; i++) {
     if (!underFocus(i)) continue;
     const seg = childSeg(i);
+    // a dropped file is gone, not "outside" — otherwise every hidden leaf comes
+    // straight back as a ghost box
+    if (dropped && hiddenSegs.has(seg)) { dropped[i] = 1; continue; }
     let n = nodes.get(seg);
     if (!n) {
       n = { name: seg, path: focus.concat([seg]).join("/"), isDir: PARTS[i].length > focus.length + 1,
@@ -452,6 +529,7 @@ function buildLevel() {
   for (const e of EDGES) {
     const w = edgeWeight(e);
     if (w <= 0) continue;
+    if (dropped && (dropped[e[0]] || dropped[e[1]])) continue;
     const a = owner[e[0]], b = owner[e[1]];
     if (a === -1 && b === -1) continue;
     if (a !== -1 && b !== -1) {
@@ -800,8 +878,29 @@ function renderCycleSide() {
 
 function matches(n) { return !query || n.name.toLowerCase().includes(query); }
 
+/** Leaves are found on a full build, then the level is built again without them —
+ *  one pass, not to fixpoint: hiding a leaf can make its importer a leaf too, and
+ *  peeling until nothing is left would empty the graph rather than simplify it. */
+function levelForView() {
+  const base = buildLevel(null);
+  hiddenLeaves = 0;
+  if (!hideLeaves) return base;
+  const leaves = new Set(base.nodes.filter(isLeaf).map(n => n.name));
+  hiddenLeaves = leaves.size;
+  if (!leaves.size) return base;
+  const pruned = buildLevel(leaves);
+  // a node whose only import was a hidden leaf is not itself a leaf — the badge
+  // describes the code, not the filtered view
+  pruned.nodes.forEach(n => { n.leafReal = false; });
+  return pruned;
+}
+
 function render() {
-  level = buildLevel();
+  level = levelForView();
+  // whatever the side panel was showing may have just been hidden
+  if (selected && !level.nodes.some(n => n.name === selected)) selected = null;
+  document.getElementById("t-leaf").innerHTML =
+    `${icon("leaf")}hide leaves${hiddenLeaves ? ` (${hiddenLeaves})` : ""}`;
   document.getElementById("s-folders").textContent = level.nodes.filter(n => n.isDir).length;
   document.getElementById("s-files").textContent = level.nodes.reduce((a, n) => a + n.files.length, 0);
   document.getElementById("s-loc").textContent = fmtLoc(level.nodes.reduce((a, n) => a + n.loc, 0));
@@ -933,13 +1032,17 @@ function ENTRY_BY_DESIGN(n) {
   return n.files.some(fileEntryByDesign);
 }
 
+/** The bottom of the graph: something depends on it, it depends on nothing. Whole
+ *  rows of these carry no structure, which is what the "hide leaves" toggle drops. */
+function isLeaf(n) { return n.out + n.extOut === 0 && n.in + n.extIn > 0; }
+
 /** Role at a glance: what depends on it, what it depends on, is it in a cycle. */
 function badges(n) {
   const out = [];
   if (n.inCycle) out.push("cyc");
   const totalIn = n.in + n.extIn, totalOut = n.out + n.extOut;
   if (totalIn >= 40) out.push("hub");
-  if (totalOut === 0 && totalIn > 0) out.push("leaf");
+  if (n.leafReal !== undefined ? n.leafReal : isLeaf(n)) out.push("leaf");
   if (totalIn === 0) out.push(ENTRY_BY_DESIGN(n) ? "entry point" : "uncalled");
   return out;
 }
@@ -1126,7 +1229,7 @@ function renderGraph() {
   const marker = (id, cls) => `<marker id="${id}" viewBox="0 0 8 8" refX="7" refY="4"
     markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto">
     <path class="${cls}" d="M0,0 L8,4 L0,8 z"/></marker>`;
-  parts.push(`<defs>${marker("ah", "mk-mute")}${marker("ah-red", "mk-red")}${marker("ah-blue", "mk-blue")}${marker("ah-ext", "mk-ext")}</defs>`);
+  parts.push(`<defs>${marker("ah", "mk-mute")}${marker("ah-red", "mk-red")}${marker("ah-blue", "mk-blue")}${marker("ah-ext", "mk-ext")}${marker("ah-amber", "mk-amber")}</defs>`);
 
   // in cycle focus only the loops are drawn at all; otherwise back-edges are drawn
   // last so a cycle is never buried under ordinary downhill traffic
@@ -1196,6 +1299,7 @@ function renderGraph() {
   document.getElementById("canvas").innerHTML = parts.join("");
   wireGraph();
   highlightEdges();
+  applyTrace();     // the SVG is new; the followed import is not
 }
 
 /** Ghost edges connect a box to a dashed stand-in for the outside world. */
@@ -1451,6 +1555,84 @@ function linkHover(fileIdx, on, reveal) {
   if (!on) cancelReveal();
 }
 
+function ownerOf(fileIdx) {
+  const ni = level && level.owner ? level.owner[fileIdx] : -1;
+  return ni === undefined ? -1 : ni;
+}
+
+let hoverEdgePath = null, hoverEdgeHome = null, hoverEdgeMarker = null;
+// the import last followed, as a file pair — resolved to boxes at paint time, so it
+// survives re-renders, drags and drilling as long as both ends are on screen
+let trace = null;
+
+function setTrace(srcFile, dstFile) {
+  trace = srcFile === dstFile ? null : { s: srcFile, t: dstFile };
+  applyTrace();
+}
+
+/** Light the followed import: both boxes amber, the arrow between them amber and
+ *  lifted above the boxes it would otherwise pass behind. */
+function applyTrace() {
+  const svg = document.getElementById("svg");
+  if (!svg) return;
+  svg.querySelectorAll("g.node.tr").forEach(g => g.classList.remove("tr"));
+  svg.querySelectorAll("path.edge.trace").forEach(p => {
+    if (p === hoverEdgePath) return;
+    p.classList.remove("trace");
+    p.setAttribute("marker-end", p.dataset.ext !== undefined ? "url(#ah-ext)" : "url(#ah)");
+  });
+  if (!trace || !level) return;
+  const a = ownerOf(trace.s), b = ownerOf(trace.t);
+  for (const idx of [a, b]) {
+    if (idx !== -1) svg.querySelector(`g.node[data-node="${idx}"]`)?.classList.add("tr");
+  }
+  if (a === -1 || b === -1 || a === b) return;   // one box owns both ends: no arrow to light
+  const l = level.links.find(x => x.s === a && x.t === b);
+  const p = l && svg.querySelector(`path.edge[data-i="${l.i}"]`);
+  if (!p) return;
+  p.classList.add("trace");
+  p.setAttribute("marker-end", "url(#ah-amber)");
+  p.parentNode.appendChild(p);
+}
+
+/** Edges are drawn before the boxes, so the one you are pointing at spends half its
+ *  length hidden behind them. Lift it to the end of the SVG while it is lit, and put
+ *  it back exactly where it was afterwards. */
+function clearHoverEdge() {
+  if (hoverEdgePath) {
+    hoverEdgePath.classList.remove("trace");
+    hoverEdgePath.setAttribute("marker-end", hoverEdgeMarker);
+    if (hoverEdgeHome && hoverEdgeHome.parentNode) hoverEdgeHome.parentNode.insertBefore(hoverEdgePath, hoverEdgeHome);
+  }
+  hoverEdgePath = hoverEdgeHome = hoverEdgeMarker = null;
+}
+
+/** Hovering a resolved import — a blue line number in the source, or a row in
+ *  imports / imported by — answers "where is this in the diagram?": both boxes light
+ *  up, the arrow between them is drawn as if you were pointing at it, and the canvas
+ *  scrolls to hold the pair. `incoming` flips the direction for the importers list. */
+function importHover(otherIdx, on, incoming, anchorIdx) {
+  const anchor = anchorIdx == null ? openIdx : anchorIdx;
+  linkHover(otherIdx, on, false);        // rows and the other box; the scroll is ours
+  const a = ownerOf(incoming ? otherIdx : anchor), b = ownerOf(incoming ? anchor : otherIdx);
+  const self = ownerOf(anchor);
+  if (self !== -1) document.querySelector(`g.node[data-node="${self}"]`)?.classList.toggle("xhi", on);
+  clearHoverEdge();
+  if (!on) { applyTrace(); return cancelReveal(); }   // whatever was followed stays lit
+  // one box owns both files (a folder-level view of an import inside it): nothing to draw
+  if (a !== -1 && b !== -1 && a !== b) {
+    const l = level.links.find(x => x.s === a && x.t === b);
+    const p = l && document.querySelector(`#svg path.edge[data-i="${l.i}"]`);
+    if (p) {
+      hoverEdgePath = p; hoverEdgeHome = p.nextSibling; hoverEdgeMarker = p.getAttribute("marker-end");
+      p.classList.add("trace");
+      p.setAttribute("marker-end", "url(#ah-amber)");
+      p.parentNode.appendChild(p);
+    }
+  }
+  revealPair(a === -1 ? null : level.nodes[a], b === -1 ? null : level.nodes[b]);
+}
+
 /** Hovering a graph node lights every row and source line that names one of its files. */
 function nodeHover(nodeIdx, on, reveal) {
   const n = level.nodes[nodeIdx];
@@ -1480,6 +1662,33 @@ function revealInGraph(box, delay = 160) {
     else if (box.y + h + pad > top + c.clientHeight) top = box.y + h + pad - c.clientHeight;
     if (box.x - pad < left) left = Math.max(0, box.x - pad);
     else if (box.x + box.w + pad > left + c.clientWidth) left = box.x + box.w + pad - c.clientWidth;
+    if (top !== c.scrollTop || left !== c.scrollLeft) c.scrollTo({ top, left, behavior: "smooth" });
+  }, delay);
+}
+
+/** Both ends of one import at once. If the pair fits on screen, scroll only as far
+ *  as it takes to hold both; if it cannot fit, centre the far end — half an arrow is
+ *  still an answer, an empty canvas is not. */
+function revealPair(a, b, delay = 160) {
+  cancelReveal();
+  if (view !== "graph") return;
+  const boxes = [a, b].filter(n => n && n.x !== undefined);
+  if (!boxes.length) return;
+  const target = b || a;
+  revealTimer = setTimeout(() => {
+    const c = document.getElementById("canvas"), pad = 50;
+    const h = n => (n.total !== undefined ? GH : NH);
+    const x1 = Math.min(...boxes.map(n => n.x)), x2 = Math.max(...boxes.map(n => n.x + n.w));
+    const y1 = Math.min(...boxes.map(n => n.y)), y2 = Math.max(...boxes.map(n => n.y + h(n)));
+    let top = c.scrollTop, left = c.scrollLeft;
+    if (y2 - y1 + 2 * pad <= c.clientHeight) {
+      if (y1 - pad < top) top = Math.max(0, y1 - pad);
+      else if (y2 + pad > top + c.clientHeight) top = y2 + pad - c.clientHeight;
+    } else top = Math.max(0, target.y + h(target) / 2 - c.clientHeight / 2);
+    if (x2 - x1 + 2 * pad <= c.clientWidth) {
+      if (x1 - pad < left) left = Math.max(0, x1 - pad);
+      else if (x2 + pad > left + c.clientWidth) left = x2 + pad - c.clientWidth;
+    } else left = Math.max(0, target.x + target.w / 2 - c.clientWidth / 2);
     if (top !== c.scrollTop || left !== c.scrollLeft) c.scrollTo({ top, left, behavior: "smooth" });
   }, delay);
 }
@@ -1682,8 +1891,11 @@ function symbolsBetween(srcIdx, dstIdx) {
   return SYM_EDGE.get(srcIdx + ">" + dstIdx) || [];
 }
 
+// two stacks, browser-style: where you came from, and where you came back from
 let openIdx = null, openLine = 0;
-const history_ = [];
+const history_ = [], forward_ = [];
+// file the side panel is describing while the code pane shows something else
+let sidePin = null, sidePinLine = 0, previewTimer = null;
 
 const KEYWORDS = new Set(("abstract as async await break case catch class const continue declare default delete do else enum export " +
   "extends false finally for from function get if implements import in instanceof interface is keyof let new null of private " +
@@ -1728,17 +1940,25 @@ function highlight(src) {
   return out.split("\n");
 }
 
-function openFile(idx, line, push) {
+function openFile(idx, line, push, keepPanel) {
   if (idx == null || idx < 0) return;
-  if (push !== false && openIdx !== null) history_.push([openIdx, openLine]);
+  clearTimeout(previewTimer);       // a real jump beats a pending preview
+  if (!keepPanel) sidePin = null;   // any deliberate jump takes the panel with it
+  // a fresh jump forks the trail: whatever "forward" pointed at is gone. Re-opening
+  // the file already on screen at another line is not a navigation — no trail entry.
+  if (push !== false) {
+    if (openIdx !== null && openIdx !== idx) history_.push([openIdx, openLine]);
+    forward_.length = 0;
+  }
   openIdx = idx; openLine = line || 0;
   history.replaceState(null, "", "#file:" + FILES[idx] + (openLine ? ":" + openLine : ""));
   document.getElementById("codepane").style.display = "flex";
   document.getElementById("handle").style.display = "block";
   if (view === "graph") renderGraph();  // canvas just got narrower — reflow the columns
   document.getElementById("code-path").textContent = FILES[idx];
+  syncCodeNav();
   document.getElementById("legend").textContent =
-    "blue line number = resolved import, click to follow · ← = back · graph = return to diagram";
+    "blue line number = resolved import, click to follow · in imports / imported by: click = show that file here, double-click = jump to the import · ← back / forward → retrace · ✕ or Esc closes the code view";
 
   const lines = highlight(SOURCES[idx]);
   const linkAt = new Map();
@@ -1748,8 +1968,8 @@ function openFile(idx, line, push) {
     const tgt = linkAt.get(n);
     const cls = "cl" + (tgt !== undefined ? " lk" : "") + (n === openLine ? " cur" : "");
     const wire = tgt !== undefined
-      ? ` data-file="${tgt}" onclick="openFile(${tgt}, 1)" title="→ ${esc(FILES[tgt])}"` +
-        ` onmouseenter="linkHover(${tgt}, true, true)" onmouseleave="linkHover(${tgt}, false)"`
+      ? ` data-file="${tgt}" onclick="followImport(${tgt}, 1, false, ${idx})" title="→ ${esc(FILES[tgt])}"` +
+        ` onmouseenter="importHover(${tgt}, true)" onmouseleave="importHover(${tgt}, false)"`
       : "";
     return `<div class="${cls}" id="L${n}"${wire}><span class="gut">${n}</span><span class="src">${h || " "}</span></div>`;
   }).join("");
@@ -1764,15 +1984,66 @@ function openFile(idx, line, push) {
   if (ni !== undefined && ni !== -1) revealInGraph(level.nodes[ni], 0);
 }
 
+/** Follow an import for real: jump to the site, and the arrow you took stays amber
+ *  in the diagram until another one is followed. */
+function followImport(idx, line, incoming, anchor) {
+  const from = anchor == null ? openIdx : anchor;
+  setTrace(incoming ? idx : from, incoming ? from : idx);
+  openFile(idx, line);
+}
+
+/** Show a file without leaving the list you are reading. One click through five
+ *  importers keeps "imported by" on screen the whole way; a double-click on the
+ *  same row commits — jumps to the import site and moves the panel with it. */
+function previewFile(idx, incoming, anchor) {
+  if (idx == null || idx < 0) return;
+  const from = anchor == null ? openIdx : anchor;
+  setTrace(incoming ? idx : from, incoming ? from : idx);
+  if (idx === openIdx) return;      // already on screen — the click was only "light it"
+  // held for a beat so a double-click does not render the file twice — once at the
+  // top, then again at the import line
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => {
+    if (sidePin === null) { sidePin = openIdx; sidePinLine = openLine; }
+    openFile(idx, 0, undefined, true);
+  }, 190);
+}
+
+/** Back to the file the panel is about, at the line you left it on. */
+function unpinSide() {
+  if (sidePin === null) return;
+  const back = sidePin, line = sidePinLine;
+  sidePin = null;
+  openFile(back, line);
+}
+
+/** Back no longer closes the pane when the trail runs out — the ✕ does that, and a
+ *  button that means two different things depending on hidden state is a trap.
+ *  Retracing keeps the pinned panel: back through previews is still one reading. */
 function codeBack() {
   const prev = history_.pop();
-  if (!prev) return closeCode();
-  openFile(prev[0], prev[1], false);
+  if (!prev) return;
+  forward_.push([openIdx, openLine]);
+  openFile(prev[0], prev[1], false, sidePin !== null);
+}
+
+function codeForward() {
+  const next = forward_.pop();
+  if (!next) return;
+  history_.push([openIdx, openLine]);
+  openFile(next[0], next[1], false, sidePin !== null);
+}
+
+/** Grey out whichever direction has nothing behind it. */
+function syncCodeNav() {
+  document.getElementById("code-back").classList.toggle("off", !history_.length);
+  document.getElementById("code-fwd").classList.toggle("off", !forward_.length);
 }
 
 function hideCode() {
   if (openIdx === null) return;
-  openIdx = null; history_.length = 0;
+  openIdx = null; sidePin = null; history_.length = 0; forward_.length = 0;
+  trace = null; applyTrace();
   document.getElementById("codepane").style.display = "none";
   document.getElementById("handle").style.display = "none";
 }
@@ -1805,7 +2076,16 @@ const LEGEND_CYCLE = "cycle focus · red numbered boxes = the loop, in order · 
 
 function resetLegend() {
   document.getElementById("legend").textContent = cycleView ? LEGEND_CYCLE : LEGEND_DEFAULT;
+  // the card is closed most of the time — say on the button itself that the text
+  // behind it changed
+  const fab = document.getElementById("legend-fab");
+  fab.classList.toggle("cyc", cycleView);
+  fab.title = cycleView ? "legend — cycle focus is on" : "legend";
 }
+
+/* hover opens the card; click pins it, for touch and for reading it slowly */
+document.getElementById("legend-fab").onclick = () =>
+  document.getElementById("legend-dock").classList.toggle("pin");
 
 function closeCode() {
   hideCode();
@@ -1825,7 +2105,7 @@ function groupBy(pairs, key) {
 /** Full path, directory dimmed. Two trailing segments used to be enough until
  *  `packages/shared/src/index.ts` and `packages/core/src/index.ts` both
  *  rendered as "src/index.ts" — the abbreviation was inventing wrong answers. */
-function relRow(fileIdx, lines, dir, jumpLine, symbols) {
+function relRow(fileIdx, lines, dir, jumpLine, symbols, anchor) {
   const full = FILES[fileIdx];
   const cut = full.lastIndexOf("/") + 1;
   const k = fileKind(full.slice(cut));
@@ -1833,37 +2113,51 @@ function relRow(fileIdx, lines, dir, jumpLine, symbols) {
     ? `<div class="syms">${symbols.slice(0, 12).map(n => `<span class="sym">${esc(n)}</span>`).join("")}` +
       (symbols.length > 12 ? `<span class="sym more">+${symbols.length - 12}</span>` : "") + `</div>`
     : "";
-  return `<div class="row" data-file="${fileIdx}" onclick="openFile(${fileIdx}, ${jumpLine})" title="${esc(full)}"
-    onmouseenter="linkHover(${fileIdx}, true, true)" onmouseleave="linkHover(${fileIdx}, false)">
+  // one click reads, two clicks travel — see previewFile()
+  const cls = "row" + (openIdx === fileIdx && sidePin !== null ? " showing" : "");
+  return `<div class="${cls}" data-file="${fileIdx}" onclick="previewFile(${fileIdx}, ${dir === "←"}, ${anchor})"
+    ondblclick="followImport(${fileIdx}, ${jumpLine}, ${dir === "←"}, ${anchor})"
+    title="${esc(full)}&#10;click = show it here · double-click = jump to the import"
+    onmouseenter="importHover(${fileIdx}, true, ${dir === "←"}, ${anchor})"
+    onmouseleave="importHover(${fileIdx}, false, ${dir === "←"}, ${anchor})">
     <span class="name">${dir} <span class="g-${k}">${KINDS[k].glyph}</span> <span class="dir">${esc(full.slice(0, cut))}</span>${esc(full.slice(cut))}</span>
     <span class="num">${lines.length}</span></div>${syms}`;
 }
 
 function renderCodeSide() {
   const el = document.getElementById("side");
-  const imports = groupBy(LINKS[openIdx]);
-  const importers = groupBy(IMPORTERS[openIdx]);
-  const name = FILES[openIdx].split("/").pop();
+  // the panel describes the file you are reading *about*, which is not always the
+  // file on screen: previewing an importer leaves the list where it was
+  const anchor = sidePin !== null ? sidePin : openIdx;
+  const imports = groupBy(LINKS[anchor]);
+  const importers = groupBy(IMPORTERS[anchor]);
+  const name = FILES[anchor].split("/").pop();
   const k = fileKind(name);
-  let html = `<h3><span class="g-${k}">${KINDS[k].glyph}</span> ${esc(name)}</h3>
-    <div class="sub">${esc(FILES[openIdx])}</div>
-    <div class="sub">${KINDS[k].label} · ${icon("lines")} ${LOC[openIdx]} loc · ${icon("sym")} ${SYMS[openIdx]} symbols · ${icon("out")} ${LINKS[openIdx].length} imports · ${icon("in")} used by ${IMPORTERS[openIdx].length}</div>`;
+  const away = sidePin !== null && openIdx !== anchor;
+  // reading about one file while looking at another: name it, and offer the way back
+  const viewBtn = away
+    ? `<span class="view" onclick="unpinSide()" title="show ${esc(FILES[anchor])} in the code pane again">${icon("eye")}view</span>`
+    : "";
+  let html = `<h3><span class="g-${k}">${KINDS[k].glyph}</span> ${esc(name)}${viewBtn}</h3>
+    <div class="sub">${esc(FILES[anchor])}</div>
+    <div class="sub">${KINDS[k].label} · ${icon("lines")} ${LOC[anchor]} loc · ${icon("sym")} ${SYMS[anchor]} symbols · ${icon("out")} ${LINKS[anchor].length} imports · ${icon("in")} used by ${IMPORTERS[anchor].length}</div>`;
+  if (away) html += `<div class="pinned">${icon("book")} code pane is showing <b>${esc(FILES[openIdx])}</b></div>`;
 
   // same verdict as the graph gives, so it travels with you into the source
-  const callerCount = new Set(IMPORTERS[openIdx].map(([, src]) => src)).size;
+  const callerCount = new Set(IMPORTERS[anchor].map(([, src]) => src)).size;
   if (callerCount) {
-    html += `<div class="banner called">${icon("check")} called from ${callerCount} file${callerCount === 1 ? "" : "s"} · ${IMPORTERS[openIdx].length} import site${IMPORTERS[openIdx].length === 1 ? "" : "s"}</div>`;
-  } else if (fileEntryByDesign(openIdx)) {
+    html += `<div class="banner called">${icon("check")} called from ${callerCount} file${callerCount === 1 ? "" : "s"} · ${IMPORTERS[anchor].length} import site${IMPORTERS[anchor].length === 1 ? "" : "s"}</div>`;
+  } else if (fileEntryByDesign(anchor)) {
     html += `<div class="banner entry">${icon("entry")} entry point — nothing imports it, by design</div>`;
   } else {
     html += `<div class="banner uncalled">${icon("ban")} uncalled — nothing imports it, and it is not an entrypoint</div>`;
   }
-  const exps = EXPORTS[openIdx] || [];
+  const exps = EXPORTS[anchor] || [];
   if (exps.length) {
-    const dead = exps.filter(([name]) => symbolUsers(openIdx, name).length === 0).length;
+    const dead = exps.filter(([name]) => symbolUsers(anchor, name).length === 0).length;
     html += `<div class="section-label">${icon("export")} exports (${exps.length}${dead ? ` · ${dead} unused` : ""})</div>`;
     html += exps.map(([name, line, from]) => {
-      const users = symbolUsers(openIdx, name);
+      const users = symbolUsers(anchor, name);
       const key = "s:" + name;
       const open = expandedSymbols.has(key);
       const cls = users.length ? "" : " unused-sym";
@@ -1881,15 +2175,17 @@ function renderCodeSide() {
   }
 
   html += `<div class="section-label">${icon("out")} imports (${imports.length} files)</div>`;
-  html += imports.map(([f, lines]) => relRow(f, lines, "→", 1, symbolsBetween(openIdx, f))).join("") || '<div class="sub">none resolved</div>';
+  html += imports.map(([f, lines]) => relRow(f, lines, "→", 1, symbolsBetween(anchor, f), anchor)).join("") || '<div class="sub">none resolved</div>';
   html += `<div class="section-label">${icon("in")} imported by (${importers.length} files)</div>`;
-  html += importers.map(([f, lines]) => relRow(f, lines, "←", lines[0], symbolsBetween(f, openIdx))).join("") || '<div class="sub">nothing</div>';
+  html += importers.map(([f, lines]) => relRow(f, lines, "←", lines[0], symbolsBetween(f, anchor), anchor)).join("") || '<div class="sub">nothing</div>';
   el.innerHTML = html;
 }
 
 document.addEventListener("keydown", e => {
   if (e.key !== "Escape") return;
-  if (openIdx !== null) closeCode();
+  const dock = document.getElementById("legend-dock");
+  if (dock.classList.contains("pin")) dock.classList.remove("pin");
+  else if (openIdx !== null) closeCode();
   else if (cycleView) toggleCycleView();
 });
 
@@ -1914,6 +2210,11 @@ document.getElementById("t-type").onclick = e => {
   e.currentTarget.classList.toggle("on", hideTypeOnly);
   render();
 };
+document.getElementById("t-leaf").onclick = e => {
+  hideLeaves = !hideLeaves;
+  e.currentTarget.classList.toggle("on", hideLeaves);
+  render();
+};
 document.getElementById("t-labels").onclick = e => {
   showLabels = !showLabels;
   e.currentTarget.classList.toggle("on", showLabels);
@@ -1931,7 +2232,7 @@ document.getElementById("badge-legend").innerHTML = [
   ["leaf", "depends on nothing"],
   ["entry", "entry point — nothing imports it by design"],
   ["uncalled", "nothing imports it and it is not an entrypoint"],
-].map(([b, what]) => `${badgePill(b)} ${what}`).join(" ");
+].map(([b, what]) => `<span>${badgePill(b)}${esc(what)}</span>`).join("");
 
 paintIcons();
 readHash();
