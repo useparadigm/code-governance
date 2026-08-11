@@ -51,6 +51,32 @@ that analysis with every repo-specific assumption replaced by detection.
   says so and shows the import closing each hop. Arrowheads no longer scale with
   edge weight, and in-graph badges (`cyc`, `hub`, `uncalled`) render filled
   instead of blank — `.node rect` was overriding their colour.
+- **The graph untangles itself.** Layering decided which row a box belonged to and
+  nothing decided its column, so each row was sorted by degree — an order that
+  ignores where a box's neighbours sit and crosses edges for no reason. Rows are
+  now ordered by the second half of Sugiyama: weighted-median sweeps in both
+  directions, then adjacent-swap refinement, keeping the best-scoring pass. Every
+  edge that skips a row is split into one placeholder per row it crosses, which
+  is what lets the sweeps account for a long edge at all, and each placeholder
+  reserves a corridor in its row, so the edge is routed through the gap between
+  two boxes instead of straight over them. On this repo's own `code_governance/`
+  level that is 64 edge crossings down to 7. Dragging a box still overrides its
+  position — it just should not be the only way to read the diagram.
+- **Corridors run straight.** Ordering says who is left of whom; it does not say
+  where. Packing each row flush left meant a corridor reserved in four rows landed
+  in a different column in each of them, and the edge wove down the page through
+  lanes that never lined up. X is now its own pass: each box is pulled towards the
+  median of what it connects to in the row above, then the row below, most-connected
+  first, with placeholders outranking real boxes — a straight long edge is worth
+  more than a centred node. Corridor wander drops from 239px to 46px and the
+  direction changes along an edge from 27 to 6.
+- **A layer that does not fit becomes rows, not a wrapped band.** Over-wide layers
+  used to flow-wrap at draw time, which quietly stopped them being layers: edges
+  inside the band turned into same-row arcs, and neither the ordering nor the x
+  pass could line a corridor up against a box that had landed in a different band.
+  The split now happens before ordering, into ordinary consecutive rows. Nothing is
+  lost by it — nodes of one layer do not depend on each other — and it holds at any
+  canvas width, down to one box per row.
 - **The chrome gets out of the way.** Two full-width legend bands and four counts
   in the header were permanent furniture around a diagram that needs the room. The
   counts (folders, files, edges, lines of code) hang off the breadcrumb and appear

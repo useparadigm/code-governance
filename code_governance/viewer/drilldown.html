@@ -1099,31 +1099,318 @@ function layoutGhosts(list, y, avail, incoming) {
   return { height: rows ? rows * (GH + 10) : 0, width: maxX };
 }
 
-/** Layer layout first, then any box the user dragged goes where they put it. */
+/* ---------- crossing reduction ----------
+ *  Layering puts a node in the right row and says nothing about its column. Ordering
+ *  a row by degree — what this used to do — ignores where a node's neighbours sit, so
+ *  edges crossed for no reason at all. What follows is the ordering half of Sugiyama:
+ *  median sweeps plus adjacent-swap refinement, run over a graph in which every edge
+ *  that skips a row has been split into one dummy per row it crosses. The dummies earn
+ *  their keep twice. The sweeps can only account for a long edge if it exists in the
+ *  rows between its ends, and each dummy reserves a gap in its row, so the edge is
+ *  routed through the corridor between two boxes instead of straight over them. */
+
+const ORDER_SWEEPS = 8;
+const DUMMY_GAP = 16;   // the corridor a skipped-over edge gets to itself
+
+/** A layer of forty leaves does not fit on any screen, and it used to be flow-wrapped
+ *  at draw time — which broke the row into bands that ordering and x placement could
+ *  no longer reason about, because "the box above this one" was then in a band with an
+ *  unrelated column. So the split happens here instead, before anything is ordered: an
+ *  over-wide layer becomes several ordinary consecutive rows. Nothing is lost by it —
+ *  nodes of one layer do not depend on each other, so there is no edge to mangle — and
+ *  every later stage sees rows that already fit. */
+function splitWideRanks(nodes, avail) {
+  const budget = Math.max(240, avail - 40);
+  const byRank = new Map();
+  let top = 0;
+  for (const n of nodes) top = Math.max(top, n.layer);
+  nodes.forEach((n, i) => {
+    const r = top - n.layer;
+    if (!byRank.has(r)) byRank.set(r, []);
+    byRank.get(r).push(i);
+  });
+  const rankOf = new Int32Array(nodes.length);
+  let next = 0;
+  for (let r = 0; r <= top; r++) {
+    // degree-descending is the seed the sweeps start from, and it decides the split
+    // too: the busiest boxes of a layer stay together on its first row
+    const group = (byRank.get(r) || []).sort((a, b) => deg(nodes[b]) - deg(nodes[a]));
+    let used = 0, first = true;
+    for (const i of group) {
+      const w = nodeWidth(nodes[i]);
+      if (!first && used + w > budget) { next++; used = 0; }
+      rankOf[i] = next;
+      used += w + GAPX;
+      first = false;
+    }
+    next++;
+  }
+  return { rankOf, rankCount: Math.max(1, next) };
+}
+
+/** Rows top-down (rank 0 = most dependent), each a list of real nodes and dummies,
+ *  ordered so that few edges cross. Also the dummy chain of every long edge. */
+function orderLayers(nodes, links, avail) {
+  const { rankOf, rankCount } = splitWideRanks(nodes, avail);
+  const rows = Array.from({ length: rankCount }, () => []);
+  const vert = nodes.map((n, i) => ({ real: i, rank: rankOf[i], pos: 0, up: [], down: [] }));
+  for (const v of vert.slice().sort((a, b) => deg(nodes[b.real]) - deg(nodes[a.real]))) rows[v.rank].push(v);
+
+  const chains = [];
+  for (const l of links) {
+    l.bends = null;
+    const a = vert[l.s], b = vert[l.t];
+    // same row, or pointing back up: those are drawn as arcs, not as layer traffic.
+    // (Type-only imports are outside the SCCs, so a level's layers are not a strict
+    // DAG and an edge can land on or above its own source.)
+    if (!a || !b || b.rank <= a.rank) continue;
+    const path = [a];
+    for (let r = a.rank + 1; r < b.rank; r++) {
+      const d = { real: -1, rank: r, pos: 0, up: [], down: [] };
+      rows[r].push(d);
+      path.push(d);
+    }
+    path.push(b);
+    for (let k = 0; k + 1 < path.length; k++) {
+      path[k].down.push(path[k + 1]);
+      path[k + 1].up.push(path[k]);
+    }
+    if (path.length > 2) chains.push({ link: l, dummies: path.slice(1, -1) });
+  }
+  rows.forEach(r => r.forEach((v, i) => { v.pos = i; }));
+
+  let best = rows.map(r => r.slice()), bestCross = countCrossings(rows);
+  for (let it = 0; it < ORDER_SWEEPS && bestCross; it++) {
+    // alternate which side is held fixed: a row placed well against the row above can
+    // still be wrong against the row below, and only the other direction sees that
+    const side = it % 2 ? 1 : -1;
+    for (const row of (side < 0 ? rows.slice(1) : rows.slice(0, -1).reverse())) orderRow(row, side);
+    transposeRows(rows);
+    const c = countCrossings(rows);
+    if (c < bestCross) { bestCross = c; best = rows.map(r => r.slice()); }
+  }
+  rows.forEach((r, i) => { r.length = 0; r.push(...best[i]); r.forEach((v, k) => { v.pos = k; }); });
+  return { rows, chains };
+}
+
+function deg(n) { return n.out + n.in; }
+
+/** Where a vertex wants to sit, given the fixed row on one side of it: the weighted
+ *  median of its neighbours there, which beats the mean because one far-off neighbour
+ *  should not drag a node away from the cluster it belongs to. */
+function medianPos(v, side) {
+  const adj = side < 0 ? v.up : v.down;
+  if (!adj.length) return -1;
+  const p = adj.map(u => u.pos).sort((a, b) => a - b);
+  const m = p.length >> 1;
+  if (p.length % 2) return p[m];
+  if (p.length === 2) return (p[0] + p[1]) / 2;
+  const left = p[m - 1] - p[0], right = p[p.length - 1] - p[m];
+  return left + right === 0 ? p[m - 1] : (p[m - 1] * right + p[m] * left) / (left + right);
+}
+
+/** Vertices with no neighbour on the fixed side keep the slot they already had. */
+function orderRow(row, side) {
+  const med = new Map();
+  for (const v of row) { const m = medianPos(v, side); med.set(v, m < 0 ? v.pos : m); }
+  row.sort((a, b) => med.get(a) - med.get(b) || a.pos - b.pos);
+  row.forEach((v, i) => { v.pos = i; });
+}
+
+/** Crossings between each row and the one below it. Counted as inversions over a
+ *  Fenwick tree rather than by comparing every pair of edges: this runs nine times
+ *  per layout, and a level with a thousand edges would notice the difference. */
+function countCrossings(rows) {
+  let total = 0;
+  for (const row of rows) {
+    const seq = [];   // targets in left-to-right order of their source, then of themselves
+    for (const v of row) for (const p of v.down.map(w => w.pos).sort((a, b) => a - b)) seq.push(p);
+    if (seq.length < 2) continue;
+    let size = 1;
+    for (const p of seq) size = Math.max(size, p + 1);
+    const bit = new Int32Array(size + 1);
+    // walking right to left, every edge already counted that lands further left crosses
+    for (let i = seq.length - 1; i >= 0; i--) {
+      for (let k = seq[i]; k > 0; k -= k & -k) total += bit[k];
+      for (let k = seq[i] + 1; k <= size; k += k & -k) bit[k]++;
+    }
+  }
+  return total;
+}
+
+/** The medians leave local knots the sweeps cannot see, because a median is a whole
+ *  row's opinion. Swapping neighbours one pair at a time picks those up. */
+function transposeRows(rows) {
+  for (let guard = 0; guard < 4; guard++) {
+    let improved = false;
+    for (const row of rows) {
+      for (let i = 0; i + 1 < row.length; i++) {
+        const a = row[i], b = row[i + 1];
+        if (pairCross(a, b) > pairCross(b, a)) {
+          row[i] = b; row[i + 1] = a;
+          a.pos = i + 1; b.pos = i;
+          improved = true;
+        }
+      }
+    }
+    if (!improved) return;
+  }
+}
+
+/** Crossings the two neighbours cause in this left-to-right order, both sides counted. */
+function pairCross(left, right) {
+  let c = 0;
+  for (const side of ["up", "down"])
+    for (const u of left[side]) for (const w of right[side]) if (w.pos < u.pos) c++;
+  return c;
+}
+
+/* ---------- x coordinates ----------
+ *  Ordering says who is left of whom and the packer then puts every row flush left,
+ *  which is where the last of the zigzag came from: a corridor reserved in four rows
+ *  landed in a different column in each of them, because the boxes ahead of it were
+ *  different widths, and the edge wove down the page through lanes that never lined
+ *  up. So x is a second pass. Each vertex is pulled towards the median of what it
+ *  connects to in the row above, then the row below, alternating; whoever has most at
+ *  stake moves first and everyone else fits around them. Dummies outrank every real
+ *  box, because straightening a long edge buys more than centring a node — a straight
+ *  edge is one you can follow across four rows without losing it. */
+
+const X_PASSES = 4;
+
+function vcx(v, nodes) { return v.real < 0 ? v.x : nodes[v.real].x + nodes[v.real].w / 2; }
+function vhalf(v, nodes) { return v.real < 0 ? DUMMY_GAP / 2 : nodes[v.real].w / 2; }
+function vgap(a, b) { return a.real < 0 || b.real < 0 ? 0 : GAPX; }
+function vset(v, nodes, cx) {
+  if (v.real < 0) v.x = cx; else nodes[v.real].x = cx - nodes[v.real].w / 2;
+}
+
+/** Total sideways travel along the edges, corridors counted triple. The passes keep
+ *  the best-scoring one, so a relaxation that happens to make things worse is dropped
+ *  rather than shipped. */
+function xScore(rows, nodes) {
+  let s = 0;
+  for (const row of rows) for (const v of row) for (const w of v.down)
+    s += Math.abs(vcx(v, nodes) - vcx(w, nodes)) * (v.real < 0 || w.real < 0 ? 3 : 1);
+  return s;
+}
+
+function snapshotX(rows, nodes) {
+  const out = [];
+  for (const row of rows) for (const v of row) out.push([v, v.real < 0 ? v.x : nodes[v.real].x]);
+  return out;
+}
+function restoreX(snap, nodes) {
+  for (const [v, x] of snap) { if (v.real < 0) v.x = x; else nodes[v.real].x = x; }
+}
+
+/** Left-to-right, push anything that overlaps its neighbour off to the right. The
+ *  bounds below are meant to make this a no-op; it is here so that a row which does
+ *  come out over-constrained degrades into a wider row rather than a pile of boxes. */
+function repairBand(band, nodes) {
+  let edge = 20;
+  band.forEach((v, i) => {
+    const min = edge + (i ? vgap(band[i - 1], v) : 0) + vhalf(v, nodes);
+    if (vcx(v, nodes) < min) vset(v, nodes, min);
+    edge = vcx(v, nodes) + vhalf(v, nodes);
+  });
+}
+
+/** One row moved towards the fixed row on `side`, most-connected first. */
+function placeRow(row, side, nodes, bandOf) {
+  const want = new Map(), prio = new Map();
+  for (const v of row) {
+    const adj = side < 0 ? v.up : v.down;
+    // a finite rank, not Infinity: two dummies would compare Infinity - Infinity = NaN
+    // and the sort would fall apart
+    prio.set(v, v.real < 0 ? 1e6 : adj.length);
+    if (!adj.length) { want.set(v, vcx(v, nodes)); continue; }
+    const xs = adj.map(u => vcx(u, nodes)).sort((a, b) => a - b);
+    const m = xs.length >> 1;
+    want.set(v, xs.length % 2 ? xs[m] : (xs[m - 1] + xs[m]) / 2);
+  }
+  const done = new Set();
+  for (const v of row.slice().sort((a, b) => prio.get(b) - prio.get(a))) {
+    const [band, i] = bandOf.get(v);
+    // how far v must stay from the nearest box already placed on each side, counting
+    // the room the boxes in between will still need
+    let lo = -Infinity, hi = Infinity, acc = 0;
+    for (let k = i - 1; k >= 0; k--) {
+      acc += vhalf(band[k], nodes) + vgap(band[k], band[k + 1]) + vhalf(band[k + 1], nodes);
+      if (done.has(band[k])) { lo = vcx(band[k], nodes) + acc; break; }
+      if (!k) lo = 20 + vhalf(band[0], nodes) + acc;
+    }
+    if (lo === -Infinity) lo = 20 + vhalf(v, nodes);
+    acc = 0;
+    for (let k = i + 1; k < band.length; k++) {
+      acc += vhalf(band[k], nodes) + vgap(band[k - 1], band[k]) + vhalf(band[k - 1], nodes);
+      if (done.has(band[k])) { hi = vcx(band[k], nodes) - acc; break; }
+    }
+    vset(v, nodes, Math.max(lo, Math.min(hi, want.get(v))));
+    done.add(v);
+  }
+}
+
+/** Straighten the corridors: x as its own pass over the packed rows. */
+function straightenX(rows, nodes) {
+  const bands = new Map();
+  for (const row of rows) for (const v of row) {
+    if (!bands.has(v.y)) bands.set(v.y, []);
+    bands.get(v.y).push(v);
+  }
+  const bandOf = new Map();
+  for (const band of bands.values()) {
+    band.sort((p, q) => vcx(p, nodes) - vcx(q, nodes));
+    band.forEach((v, i) => bandOf.set(v, [band, i]));
+  }
+  let best = snapshotX(rows, nodes), bestScore = xScore(rows, nodes);
+  for (let pass = 0; pass < X_PASSES; pass++) {
+    // towards the row above, then the row below: a box lined up with what imports it
+    // is still free to be wrong about what it imports, and only the other pass sees it
+    const side = pass % 2 ? 1 : -1;
+    for (const row of (side < 0 ? rows.slice(1) : rows.slice(0, -1).reverse())) placeRow(row, side, nodes, bandOf);
+    for (const band of bands.values()) repairBand(band, nodes);
+    const s = xScore(rows, nodes);
+    if (s < bestScore) { bestScore = s; best = snapshotX(rows, nodes); }
+  }
+  restoreX(best, nodes);
+  // relaxation only ever pushes right, so the result can sit anywhere. Slide the whole
+  // thing back against the left margin — every x moves by the same amount, so nothing
+  // that was straight stops being straight.
+  let min = Infinity;
+  for (const row of rows) for (const v of row) min = Math.min(min, vcx(v, nodes) - vhalf(v, nodes));
+  if (min !== Infinity && Math.abs(min - 20) > 0.5)
+    for (const row of rows) for (const v of row) vset(v, nodes, vcx(v, nodes) - (min - 20));
+}
+
+/** Ordered layer layout first, then any box the user dragged goes where they put it. */
 function layoutLevel() {
-  const { nodes } = level;
-  const byLayer = new Map();
-  for (const n of nodes) { if (!byLayer.has(n.layer)) byLayer.set(n.layer, []); byLayer.get(n.layer).push(n); }
-  const layers = [...byLayer.keys()].sort((a, b) => b - a); // most-dependent on top
-  // flow-pack each layer into whatever width the canvas actually has — the code pane
-  // takes half the window when open
+  const { nodes, links } = level;
+  // A row is one line, and a layer too wide for the canvas was split into several rows
+  // before it was ordered. Draw-time flow-wrapping is what this replaces: it left a
+  // layer in bands that the ordering and the x pass could not read, which is where the
+  // last of the zigzag was coming from.
   const avail = Math.max(320, document.getElementById("canvas").clientWidth || window.innerWidth);
+  const { rows, chains } = orderLayers(nodes, links, avail);
   const ghostIn = showExternals ? level.ghostIn : [];
   const ghostOut = showExternals ? level.ghostOut : [];
   const inBand = layoutGhosts(ghostIn, 20, avail, true);
   // 46, not 20: same-row edges bow over the top of their row and need somewhere to go
   let y = 46 + (inBand.height ? inBand.height + 34 : 0), width = inBand.width;
-  layers.forEach(L => {
-    const group = byLayer.get(L).sort((a, b) => (b.out + b.in) - (a.out + a.in));
+  rows.forEach(row => {
+    if (!row.length) return;
     let x = 20;
-    group.forEach(n => {
+    for (const v of row) {
+      if (v.real < 0) { v.x = x + DUMMY_GAP / 2; v.y = y; x += DUMMY_GAP; continue; }
+      const n = nodes[v.real];
       n.w = nodeWidth(n);
-      if (x > 20 && x + n.w > avail - 20) { x = 20; y += NH + 14; }
-      n.x = x; n.y = y;
+      n.x = x; n.y = y; v.y = y;
       x += n.w + GAPX;
-    });
+    }
     y += NH + GAPY;
   });
+  straightenX(rows, nodes);
+  for (const row of rows) for (const v of row) width = Math.max(width, vcx(v, nodes) + vhalf(v, nodes) + 20);
   const outBand = layoutGhosts(ghostOut, y + 6, avail, false);
   let height = y + outBand.height + 30;
   let moved = 0;
@@ -1132,6 +1419,12 @@ function layoutLevel() {
     if (o) { n.x = o[0]; n.y = o[1]; moved++; }
     width = Math.max(width, n.x + n.w + 20);
     height = Math.max(height, n.y + NH + 40);
+  }
+  // corridors are only where the packer put them; once an end has been dragged away
+  // the edge is on its own again
+  for (const c of chains) {
+    if (posOverride.has(nodes[c.link.s].path) || posOverride.has(nodes[c.link.t].path)) continue;
+    c.link.bends = c.dummies.map(d => [d.x, d.y + NH / 2]);
   }
   width = Math.max(width, outBand.width);
   document.getElementById("t-reset").style.display = moved ? "" : "none";
@@ -1153,12 +1446,17 @@ function assignSlots(nodes, links) {
     l.route = b.y > a.y + NH / 2 ? "down" : Math.abs(a.y - b.y) < NH ? "row" : "up";
     if (l.route === "row") rows.push(l); else if (l.route === "up") ups.push(l);
   }
+  // an edge with corridors leaves towards the first one and arrives from the last,
+  // so its port lines up with the lane it actually travels in rather than with a box
+  // several rows away that it never heads straight for
+  const headX = l => (l.bends && l.bends.length ? l.bends[0][0] : nodes[l.t].x);
+  const tailX = l => (l.bends && l.bends.length ? l.bends[l.bends.length - 1][0] : nodes[l.s].x);
   for (const list of outs.values()) {
-    list.sort((a, b) => nodes[a.t].x - nodes[b.t].x);
+    list.sort((a, b) => headX(a) - headX(b));
     list.forEach((l, k) => { l.sx = (k + 1) / (list.length + 1); });
   }
   for (const list of ins.values()) {
-    list.sort((a, b) => nodes[a.s].x - nodes[b.s].x);
+    list.sort((a, b) => tailX(a) - tailX(b));
     list.forEach((l, k) => { l.tx = (k + 1) / (list.length + 1); });
   }
   // stagger the arcs so two edges over the same stretch of row, or two back-edges
@@ -1184,11 +1482,28 @@ function edgePath(l) {
   if (l.route === "down") {
     const x1 = a.x + a.w * (l.sx === undefined ? .5 : l.sx);
     const x2 = b.x + b.w * (l.tx === undefined ? .5 : l.tx);
-    const y1 = a.y + NH, y2 = b.y, my = (y1 + y2) / 2;
+    const y1 = a.y + NH, y2 = b.y;
+    // an edge that skips a row passes through the corridor its dummies reserved there.
+    // A wrapped row can leave a corridor above where the edge already is, so the bends
+    // are only trusted while they keep going down.
+    const pts = [[x1, y1], ...(l.bends || []), [x2, y2]];
+    let ok = true;
+    for (let k = 1; k < pts.length; k++) if (pts[k][1] <= pts[k - 1][1]) ok = false;
+    if (!ok) pts.splice(1, pts.length - 2);
+    let d = `M${x1},${y1}`;
+    for (let k = 1; k < pts.length; k++) {
+      const [px, py] = pts[k - 1], [qx, qy] = pts[k], m = (py + qy) / 2;
+      d += ` C${px},${m} ${qx},${m} ${qx},${qy}`;
+    }
+    if (pts.length > 2) {
+      const k = pts.length >> 1;
+      return { d, mx: (pts[k - 1][0] + pts[k][0]) / 2, my: (pts[k - 1][1] + pts[k][1]) / 2 };
+    }
     // labels of edges leaving the same box would stack on one line; the slot they
     // already have spreads them down the gap instead
+    const my = (y1 + y2) / 2;
     const ly = my + ((l.sx === undefined ? .5 : l.sx) - .5) * Math.min(40, (y2 - y1) * .6);
-    return { d: `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`, mx: (x1 + x2) / 2, my: ly };
+    return { d, mx: (x1 + x2) / 2, my: ly };
   }
   if (l.route === "row") {
     // Side by side: arch over the row going right, under it coming back, so a mutual
