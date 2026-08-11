@@ -51,6 +51,30 @@ that analysis with every repo-specific assumption replaced by detection.
   says so and shows the import closing each hop. Arrowheads no longer scale with
   edge weight, and in-graph badges (`cyc`, `hub`, `uncalled`) render filled
   instead of blank — `.node rect` was overriding their colour.
+- **The chrome gets out of the way.** Two full-width legend bands and four counts
+  in the header were permanent furniture around a diagram that needs the room. The
+  counts (folders, files, edges, lines of code) hang off the breadcrumb and appear
+  on hover; the glyph keys, badges and edge meanings live in one card behind a
+  `legend` button in the bottom-left corner (hover to read, click to pin). The
+  cycle count stays in the header — it is a button, not a number.
+- **`hide leaves`** drops the files that import nothing at this level. It is a
+  second pass over the level rather than a render-time filter, so counts, layers
+  and cycle detection agree with what is drawn, and a hidden file cannot come back
+  as a ghost box. One pass, not to fixpoint: peeling until nothing is left would
+  empty the graph rather than simplify it. Badges still describe the code, not the
+  filtered view.
+- **Retracing the files you opened.** The code pane carries back *and* forward,
+  both greyed when there is nowhere to go, with an `✕` on the right to close it —
+  back no longer doubles as close. In `imports` / `imported by`, one click shows a
+  file while the panel stays on the one you are studying, so you can read five
+  callers without losing the list; double-click follows it to the import site. A
+  `view` button by the panel's filename puts it back on screen, at the line you
+  left.
+- **Hovering an import points at it in the diagram.** A resolved import line in
+  the source, or a row in either list, lights both boxes and the arrow between
+  them, lifts that arrow above the boxes it would otherwise pass behind, and
+  scrolls the canvas just far enough to hold the pair. Following one keeps it lit
+  after the click, through re-renders and drags, until you follow another.
 - **Coupling is grouped by workspace package** when the repo has them, top-level
   directory otherwise. `ExportInfo` and `LanguagePatterns.extract_exports` are
   new, implemented for both languages (Python infers surface from `__all__`,
