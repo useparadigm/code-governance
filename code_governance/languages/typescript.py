@@ -189,6 +189,19 @@ class TypeScriptPatterns:
                 return cfg
         return self._tsconfig
 
+    def _to_scan_relative(self, absolute: Path) -> str:
+        """Express an absolute path relative to the scanned source root, so it
+        matches source-root-relative importables. ``_repo_root`` is the scanned
+        source root (the engine passes ``repo_root/config.root``); alias targets
+        normalized against anything else never match an importable key and every
+        resolved edge is silently dropped."""
+        if self._repo_root is not None:
+            try:
+                return str(absolute.relative_to(self._repo_root)).replace("\\", "/")
+            except ValueError:
+                pass
+        return str(absolute).replace("\\", "/")
+
     def extract(self, root: SgNode, file_path: str) -> FileExtractionResult:
         imports = self._extract_imports(root)
         classes = self._extract_classes(root)
@@ -365,19 +378,20 @@ class TypeScriptPatterns:
         if tsconfig.base_url:
             base = (base / tsconfig.base_url).resolve()
         absolute = (base / target).resolve()
-        try:
-            return str(absolute.relative_to(self._repo_root)).replace("\\", "/")
-        except ValueError:
-            return str(absolute).replace("\\", "/")
+        return self._to_scan_relative(absolute)
 
     def _from_base_url(self, import_source: str, tsconfig: Optional[TsConfig]) -> str:
         if tsconfig is None or self._repo_root is None or not tsconfig.base_url:
             return import_source
         base = (tsconfig.config_dir / tsconfig.base_url).resolve()
         absolute = (base / import_source).resolve()
+        if self._repo_root is None:
+            return import_source
         try:
             return str(absolute.relative_to(self._repo_root)).replace("\\", "/")
         except ValueError:
+            # Outside the scanned root — it can never match an importable, so keep
+            # the original specifier rather than emitting an absolute path.
             return import_source
 
     def _resolve_relative(self, import_source: str, importing_file: str) -> Optional[str]:

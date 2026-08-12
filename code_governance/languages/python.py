@@ -200,7 +200,12 @@ class PythonPatterns:
         if hit is not None:
             return hit
 
-        for mod in sorted(config.modules, key=lambda m: m.path):
+        # Deepest module path first so a candidate under a nested module attributes
+        # to the most specific module, not a shallower ancestor. Deterministic.
+        for mod in sorted(
+            config.modules,
+            key=lambda m: (-len(m.path.rstrip("/").split("/")), m.path),
+        ):
             mod_prefix = mod.path.rstrip("/").replace("/", ".")
             if not mod_prefix or mod_prefix == ".":
                 continue

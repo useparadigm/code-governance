@@ -430,7 +430,9 @@ def run_auto_scan(source_root: str | Path, max_depth: int = 1) -> GovernanceRepo
 
     By default modules are the top-level packages under ``source_root`` (depth 1),
     which matches how engineers reason about architecture and keeps output usable
-    on large codebases. Use ``max_depth`` to split deeper (``0`` = unlimited)."""
+    on large codebases. Use ``max_depth`` to split deeper (``0`` = unlimited).
+    Cycle output stays clean at any granularity because cycles are reported per
+    strongly connected component."""
     from code_governance.schemas import RulesConfig
 
     source_root = Path(source_root).resolve()

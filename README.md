@@ -96,7 +96,8 @@ makes every directory its own module).
 `--auto` also checks **file-level cycles** (`no_file_cycles`) — circular imports
 between individual files, the madge `--circular` equivalent. These are detected
 independently of module granularity, so a cycle between two files inside the same
-package is caught even at `--depth 1`.
+package is caught even at `--depth 1`. Cycles are reported per strongly connected
+component, so fine granularity never floods the output.
 
 Works on TypeScript too — language auto-detected from source:
 

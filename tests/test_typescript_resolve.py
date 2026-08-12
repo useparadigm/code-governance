@@ -132,3 +132,46 @@ def test_implicit_does_not_resolve_third_party(tmp_path):
     assert p.resolve_import("react", "lib/a.ts", cfg, imap, {}) is None
     assert p.resolve_import("@posthog/icons", "lib/a.ts", cfg, imap, {}) is None
     assert p.resolve_import("kea-router", "lib/a.ts", cfg, imap, {}) is None
+
+
+# ── Configured mode with root subdir + tsconfig alias (Next.js / homi) ─────
+
+
+def _write_homi(tmp_path: Path, alias_import: str, base_url: str, paths: str):
+    (tmp_path / "src" / "app").mkdir(parents=True)
+    (tmp_path / "src" / "lib").mkdir(parents=True)
+    (tmp_path / "tsconfig.json").write_text(
+        '{ "compilerOptions": { "baseUrl": "%s", "paths": %s } }' % (base_url, paths)
+    )
+    (tmp_path / "src" / "app" / "page.tsx").write_text(
+        f"import {{ a }} from '{alias_import}'\nexport const x = a\n"
+    )
+    (tmp_path / "src" / "lib" / "util.ts").write_text("export const a = 1\n")
+    (tmp_path / "governance.toml").write_text(
+        '[governance]\nroot = "src"\nlanguage = "typescript"\n'
+        '[[modules]]\nname = "app"\npath = "app/"\ncannot_depend_on = ["lib"]\n'
+        '[[modules]]\nname = "lib"\npath = "lib/"\n'
+        "[rules]\nenforce_cannot_depend_on = true\n"
+    )
+
+
+def test_configured_alias_resolves_with_root_subdir(tmp_path):
+    # Regression: root="src" + tsconfig `@/*` -> aliases resolved to repo-root
+    # paths that never matched source-root-relative importables, so app->lib
+    # edges were dropped and cannot_depend_on could never fire (false PASS).
+    from code_governance.engine import run_governance
+    _write_homi(tmp_path, "@/lib/util", ".", '{ "@/*": ["./src/*"] }')
+    report = run_governance(tmp_path / "governance.toml")
+    app = next(m for m in report.metrics if m.name == "app")
+    assert app.external_edges == 1  # app -> lib resolved
+    forbidden = [v for v in report.violations if v.rule.value == "enforce_cannot_depend_on"]
+    assert len(forbidden) == 1 and not report.passed
+
+
+def test_configured_alias_baseurl_src(tmp_path):
+    from code_governance.engine import run_governance
+    _write_homi(tmp_path, "@/lib/util", "src", '{ "@/*": ["*"] }')
+    report = run_governance(tmp_path / "governance.toml")
+    app = next(m for m in report.metrics if m.name == "app")
+    assert app.external_edges == 1
+    assert not report.passed

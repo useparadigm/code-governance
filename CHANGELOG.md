@@ -210,13 +210,20 @@ django, scikit-learn, and PostHog (Python + TypeScript frontend).
   module counts (PostHog 1189, Django 190) and produced spurious parent/child
   containment cycles. `--auto` now uses top-level packages (PostHog 41, Django 17),
   a clean partition with no nesting cycles. `--depth N` controls granularity
-  (`0` = unlimited, the old behavior).
+  (`0` = unlimited, the old behavior). Cycle output stays clean at any granularity
+  because cycles are reported per strongly connected component (below).
 - **Underscore packages no longer dropped.** Single-underscore dirs/files
   (`_internal`, `_transports`, httpx's all-underscore layout) are kept; only
   dunder and hidden directories are skipped.
 - **Bare and root-level relative imports resolve.** `from . import submodule`,
   `from pkg import submodule`, and upward `from ..pkg import X` from a package
   `__init__` are now handled, with submodule-vs-symbol discrimination.
+- **TypeScript tsconfig aliases with a source-root subdir (Next.js / `root = "src"`).**
+  `@/*` and `baseUrl` imports were normalized to repo-root-relative paths that
+  never matched the source-root-relative module index, so every aliased edge was
+  dropped — `cannot_depend_on` / layering rules saw no dependencies and could
+  never fire (silent false PASS). Alias and baseUrl targets now normalize to the
+  scanned source root. Layering enforcement works on Next.js `@/`-alias projects.
 - **TypeScript zero-config resolution.** Bare specifiers (`scenes/urls`) and
   `~/` / `@/` src-root aliases resolve relative to the source root even when no
   `tsconfig.json` is found (PostHog frontend: 1 → 7 real cycles, ~17.5k edges).
